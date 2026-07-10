@@ -4,6 +4,7 @@ import { browserSerialProvider, PortSession, supportsWebSerial, type PortSnapsho
 
 const emptySnapshot = (role: SourceRole): PortSnapshot => ({
   role, lifecycle: "idle", health: "no-data", selected: false,
+  portInfo: null,
   lastByteAtMs: null, lastValidFrameAtMs: null, detectedRole: null, error: null,
   stats: { bytesReceived: 0, linesReceived: 0, validFrames: 0, parseErrors: 0, ignoredLines: 0, wrongRoleLines: 0 },
 });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { downloadVolume, exportSessionVolumes, listRecoverableSessions, OpfsFileStore, SessionRecorder, type RecordingArtifact, type RecordingKind, type RecoverableSession } from "../../core/storage";
 import { BUILD_INFO } from "../../shared/buildInfo";
 import { sessionId } from "../../shared/format";
@@ -46,5 +46,7 @@ export function useRecorder(kind: RecordingKind) {
       for await (const volume of exportSessionVolumes(store, id)) downloadVolume(volume);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }, []);
-  return { active, recoverable, error, start, append, stopAndDownload, downloadRecovered };
+  return useMemo(() => ({ active, recoverable, error, start, append, stopAndDownload, downloadRecovered }), [
+    active, recoverable, error, start, append, stopAndDownload, downloadRecovered,
+  ]);
 }

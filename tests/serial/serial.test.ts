@@ -83,5 +83,27 @@ describe("PortSession", () => {
     await Promise.all([session.close(), session.close()]);
     expect(closed).toBe(true);
     expect(reader.wasReleased).toBe(true);
+    expect(session.snapshot()).toMatchObject({ lifecycle: "idle", health: "no-data", error: null });
+    expect(session.snapshot().stats.validFrames).toBe(0);
+  });
+
+  it("clears an open error and prior session state after a successful retry", async () => {
+    const reader = new ControlledReader();
+    let attempts = 0;
+    const port: ReadOnlySerialPort = {
+      readable: { getReader: () => reader },
+      async open() { attempts += 1; if (attempts === 1) throw new Error("busy"); },
+      async close() { /* test double */ },
+    };
+    const session = new PortSession<RemoteFrame>({
+      role: "remote", provider: { requestPort: async () => port }, adapter: new RemoteProtocolAdapter(), now: () => 1000,
+    });
+    await session.requestPort();
+    await expect(session.connect()).rejects.toThrow("busy");
+    expect(session.snapshot()).toMatchObject({ lifecycle: "error", health: "no-data", error: "busy" });
+    await session.connect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(session.snapshot()).toMatchObject({ lifecycle: "reading", health: "valid", error: null });
+    await session.close();
   });
 });

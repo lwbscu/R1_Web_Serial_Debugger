@@ -2,9 +2,15 @@ import type { ChassisFrame, RemoteFrame } from "../../protocols";
 
 export interface DiagnosticEvent {
   observedAtMs: number;
-  kind: "X_ENTER" | "X_EXIT" | "RF_CH_CHANGE" | "ACK_TIMEOUT" | "CHASSIS_FAST_SCAN" | "LOCATER_FRAME_LOST" | "YAW_SPIKE" | "CHANNEL_MISMATCH";
+  kind: string;
   severity: "info" | "warn" | "error";
   detail: string;
+}
+
+export function firmwareEventSeverity(kind: string): DiagnosticEvent["severity"] {
+  if (/^(?:NRF_LOST|MOTOR_FAULT)$/i.test(kind)) return "error";
+  if (/^AUDIO$/i.test(kind)) return "warn";
+  return "info";
 }
 
 const numberField = (frame: ChassisFrame, name: string): number | null => {
@@ -27,6 +33,24 @@ export class DiagnosticEventDetector {
   private lastChassisAt: number | null = null;
   private latestRemote: RemoteFrame | null = null;
   private latestChassis: ChassisFrame | null = null;
+
+  resetSource(source: "remote" | "chassis"): void {
+    if (source === "remote") {
+      this.lastRemoteX = false;
+      this.lastRemoteCh = null;
+      this.latestRemote = null;
+      return;
+    }
+    this.lastChassisFast = false;
+    this.lastChassisYaw = null;
+    this.lastChassisAt = null;
+    this.latestChassis = null;
+  }
+
+  reset(): void {
+    this.resetSource("remote");
+    this.resetSource("chassis");
+  }
 
   acceptRemote(frame: RemoteFrame): DiagnosticEvent[] {
     const events: DiagnosticEvent[] = [];

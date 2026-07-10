@@ -50,6 +50,7 @@ export class PortSession<T> {
     try {
       this.port = await this.options.provider.requestPort();
       this.error = null;
+      this.clearDataState();
       this.setLifecycle("idle");
       return this.port;
     } catch (error) {
@@ -62,6 +63,7 @@ export class PortSession<T> {
     if (this.lifecycle !== "idle" && this.lifecycle !== "error") throw new Error("cannot replace an active port");
     this.port = port;
     this.error = null;
+    this.clearDataState();
     this.setLifecycle("idle");
   }
 
@@ -69,6 +71,8 @@ export class PortSession<T> {
     if (!this.port) throw new Error("no serial port selected");
     if (this.lifecycle === "reading" || this.lifecycle === "opening") return;
     this.stopping = false;
+    this.error = null;
+    this.clearDataState();
     this.setLifecycle("opening");
     try {
       await this.port.open({ baudRate: this.options.baudRate });
@@ -95,6 +99,7 @@ export class PortSession<T> {
       lifecycle: this.lifecycle,
       health: this.health(now),
       selected: this.port !== null,
+      portInfo: this.port?.getInfo?.() ?? null,
       lastByteAtMs: this.lastByteAtMs,
       lastValidFrameAtMs: this.lastValidFrameAtMs,
       detectedRole: this.detectedRole,
@@ -104,11 +109,7 @@ export class PortSession<T> {
   }
 
   resetStats(): void {
-    this.stats = EMPTY_STATS();
-    this.lastByteAtMs = null;
-    this.lastValidFrameAtMs = null;
-    this.detectedRole = null;
-    this.consecutiveWrongRole = 0;
+    this.clearDataState();
     this.emit();
   }
 
@@ -164,6 +165,7 @@ export class PortSession<T> {
   }
 
   private health(now: number): DataHealth {
+    if (this.lifecycle !== "reading") return "no-data";
     if (this.consecutiveWrongRole >= this.options.wrongRoleThreshold) return "wrong-role";
     if (this.lastValidFrameAtMs !== null) {
       return now - this.lastValidFrameAtMs > this.options.staleAfterMs ? "stale" : "valid";
@@ -182,9 +184,10 @@ export class PortSession<T> {
     if (this.readTask) await this.readTask.catch(() => undefined);
     this.readTask = null;
     if (this.port) {
-      try { await this.port.close(); } catch (error) { this.error = this.describe(error); }
+      try { await this.port.close(); this.error = null; } catch (error) { this.error = this.describe(error); }
     }
     this.reader = null;
+    this.clearDataState();
     this.setLifecycle(this.error ? "error" : "idle");
   }
 
@@ -205,6 +208,14 @@ export class PortSession<T> {
 
   private now(): number {
     return this.options.now?.() ?? performance.now();
+  }
+
+  private clearDataState(): void {
+    this.stats = EMPTY_STATS();
+    this.lastByteAtMs = null;
+    this.lastValidFrameAtMs = null;
+    this.detectedRole = null;
+    this.consecutiveWrongRole = 0;
   }
 
   private emit(): void {

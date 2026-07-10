@@ -35,6 +35,7 @@ export interface PortSnapshot {
   lifecycle: PortLifecycle;
   health: DataHealth;
   selected: boolean;
+  portInfo: { usbVendorId?: number; usbProductId?: number } | null;
   lastByteAtMs: number | null;
   lastValidFrameAtMs: number | null;
   detectedRole: SourceRole | null;
