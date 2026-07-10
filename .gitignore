@@ -6,3 +6,4 @@ coverage/
 .wrangler/
 *.local
 *.log
+!tests/fixtures/**/*.log
