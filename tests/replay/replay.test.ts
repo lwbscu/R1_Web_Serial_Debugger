@@ -1,4 +1,5 @@
 import { zipSync } from "fflate";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,8 +8,20 @@ import {
   parseReplayText,
   type ReplayTimerDriver,
 } from "../../src/core/replay";
+import { ChassisProtocolAdapter } from "../../src/protocols";
 
 describe("parseReplayText", () => {
+  it("replays the frozen CDBG v3/151 line through the chassis adapter", () => {
+    const fixture = readFileSync(new URL("../fixtures/frozen/chassis_cdbg_v3.log", import.meta.url), "utf8");
+    const records = parseReplayText(fixture, { format: "raw" });
+    const outcome = new ChassisProtocolAdapter().parse(records[0]!.payload, 1234);
+    expect(outcome).toMatchObject({
+      kind: "frame",
+      protocolVersion: "cdbg-v3",
+      frame: { fieldCount: 151, resetFlags: 1001, uart1RxByteAgeMs: 1061 },
+    });
+  });
+
   it("extracts raw log timestamps and preserves protocol payload", () => {
     const records = parseReplayText("[1.000] RDBG,1\n[1.025] RDBG,2\n", { format: "raw" });
     expect(records.map((record) => [record.offsetMs, record.payload])).toEqual([

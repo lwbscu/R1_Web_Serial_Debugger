@@ -14,7 +14,11 @@ import { usePortSession } from "../serial/usePortSession";
 import { MetricPanel } from "./components";
 import { diagnoseLink, freshMetricContext } from "./diagnosis";
 import { DiagnosticEventDetector, firmwareEventSeverity, type DiagnosticEvent } from "./eventDetector";
-import { chassisNrfMetricSpecs, locationMetricSpecs, panelStatus, remoteMetricSpecs, STATUS_LABELS, type MetricContext, type MetricSpec } from "./metrics";
+import {
+  chassisNrfMetricSpecs, locationMetricSpecs, mechanismMetricSpecs, modeSyncMetricSpecs,
+  panelStatus, remoteMetricSpecs, STATUS_LABELS, wirelessReceiveMetricSpecs,
+  type MetricContext, type MetricSpec,
+} from "./metrics";
 import { generateHtmlDiagnosticReport, generateMarkdownDiagnosticReport, type DiagnosticReportMetric } from "./reports";
 
 interface LogEntry { at: number; role: "remote" | "chassis"; line: string; result: string }
@@ -164,7 +168,14 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   const exportReport = (format: "md" | "html") => {
     const input = {
       title: "R1 双串口通信诊断报告", generatedAtMs: Date.now(), diagnosis,
-      metrics: [...reportMetrics("遥控器链路", remoteMetricSpecs, context), ...reportMetrics("底盘 NRF", chassisNrfMetricSpecs, context), ...reportMetrics("定位输入", locationMetricSpecs, context)],
+      metrics: [
+        ...reportMetrics("遥控器链路", remoteMetricSpecs, context),
+        ...reportMetrics("底盘 NRF 概览", chassisNrfMetricSpecs, context),
+        ...reportMetrics("无线接收", wirelessReceiveMetricSpecs, context),
+        ...reportMetrics("模式同步", modeSyncMetricSpecs, context),
+        ...reportMetrics("机构链路", mechanismMetricSpecs, context),
+        ...reportMetrics("定位输入", locationMetricSpecs, context),
+      ],
       events,
     };
     const name = `r1-link-report-${timestampName()}.${format}`;
@@ -185,7 +196,7 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
 
   return <main className="workspace communication-workspace" data-testid="communication-workspace">
     <WorkspaceHeader kicker="R1 LINK DIAGNOSTICS" title="双串口通信诊断" description="严格对拍本地 Python 上位机：端口健康与业务诊断分层显示，悬停任一指标可查看阈值、异常判断和排查路径。"
-      meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 fields</span><span>stale 1.5 s</span></>}
+      meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 / v3-151 fields</span><span>stale 1.5 s</span></>}
       actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className={recorder.active ? "danger" : ""} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recorder.active ? "停止并下载" : "开始本地录制"}</button><InfoTip label="本地录制说明">录制会把完整原始帧、结构化帧和事件分片暂存在本站的浏览器私有存储中；停止后才生成下载包。暂停滚动和清空界面都不会停止正在进行的录制。</InfoTip></>} />
 
     {!remotePort.supported && <div className="unsupported">实时串口需要桌面版 Chrome/Edge 和 HTTPS。当前仍可使用演示数据查看完整诊断界面。</div>}
@@ -204,7 +215,10 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
 
     <div className="diagnostic-grid">
       <MetricPanel title="遥控器链路" subtitle="发包、ACK、信号格与 X 原因" specs={remoteMetricSpecs} context={context} status={panelStatus.remote(context)} initiallyVisible={6} />
-      <MetricPanel title="底盘 NRF" subtitle="锁频、收包、摇杆与控制来源" specs={chassisNrfMetricSpecs} context={context} status={panelStatus.chassis(context)} initiallyVisible={8} />
+      <MetricPanel title="底盘 NRF 概览" subtitle="锁频、收包、摇杆与控制来源" specs={chassisNrfMetricSpecs} context={context} status={panelStatus.chassis(context)} initiallyVisible={8} />
+      <MetricPanel title="无线接收" subtitle="帧分类、任务 heartbeat、SPI 与寄存器" specs={wirelessReceiveMetricSpecs} context={context} status={panelStatus.wireless(context)} initiallyVisible={8} />
+      <MetricPanel title="模式同步" subtitle="遥控模式、实际状态与状态队列" specs={modeSyncMetricSpecs} context={context} status={panelStatus.mode(context)} initiallyVisible={4} />
+      <MetricPanel title="机构链路" subtitle="ACT 队列、USART1 发送与机构反馈" specs={mechanismMetricSpecs} context={context} status={panelStatus.mechanism(context)} initiallyVisible={5} />
       <MetricPanel title="定位输入" subtitle="定位板、传感器、电机与 CAN" specs={locationMetricSpecs} context={context} status={panelStatus.location(context)} initiallyVisible={8} />
     </div>
 
@@ -215,7 +229,7 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
           <button role="tab" aria-selected={activeTab === "frames"} className={activeTab === "frames" ? "active" : ""} onClick={() => setActiveTab("frames")}>结构化帧 <small>{shownFrames.length}</small></button>
           <button role="tab" aria-selected={activeTab === "events"} className={activeTab === "events" ? "active" : ""} onClick={() => setActiveTab("events")}>事件 <small>{shownEvents.length}</small></button>
         </div>
-        <InfoTip label="通信事件说明">事件包含网页诊断事件与固件上报事件。常见项：X_ENTER/X_EXIT 表示链路进入或退出 X 状态，ACK_TIMEOUT 表示 ACK 长时间未恢复，CHASSIS_FAST_SCAN 表示底盘快速扫频，RF_CH_CHANGE 表示遥控器信道变化，CHANNEL_MISMATCH 表示双端信道不一致，PARSE_ERROR 表示收到但未通过协议解析。warn/error 应结合时间邻近的原始帧和指标排查。</InfoTip>
+        <InfoTip label="通信事件说明">事件包含网页诊断事件与固件上报事件。v3 固件边沿为 NRF_LINK、NRF_REG、MODE_SYNC、MECH_CMD、MECH_TX、MECH_FB、UART1_ERR；COUNTER_GROWTH 表示累计错误刚刚增长，MODE_MISMATCH 表示遥控实时模式与底盘实际模式当前不一致。PARSE_ERROR 表示收到但未通过严格协议解析。warn/error 应结合时间邻近的原始帧和指标排查。</InfoTip>
         <div className="toolbar"><button className={streamPaused ? "selected" : "secondary"} onClick={toggleConsolePause}>{streamPaused ? "继续滚动" : "暂停滚动"}</button><button className="secondary" onClick={() => { frozenConsole.current = null; setStreamPaused(false); setLogs([]); setFrames([]); setEvents([]); }}>清空界面</button><button className="secondary" onClick={() => exportReport("md")}>导出 MD</button><button className="secondary" onClick={() => exportReport("html")}>导出 HTML</button><InfoTip label="暂停、清空与报告说明">暂停只冻结当前控制台快照，串口接收、指标更新和本地录制继续运行；清空只删除页面内存中的日志、帧和事件。MD/HTML 报告导出的是当前诊断指标与事件摘要，不等同于包含完整原始数据的录制包。</InfoTip></div>
       </div>
 

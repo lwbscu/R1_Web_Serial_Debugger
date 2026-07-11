@@ -18,6 +18,7 @@ export interface UPlotWaveformProps {
   throughMs: number;
   xZoomRatio?: number;
   yZoomRatio?: number;
+  smoothLevel?: number;
   maxPointsPerSeries?: number;
   onVisibilityChange?: (id: PlotSeriesInput["id"], visible: boolean) => void;
   onUserNavigate?: () => void;
@@ -95,6 +96,7 @@ export function UPlotWaveform({
   throughMs,
   xZoomRatio = 1,
   yZoomRatio = 1,
+  smoothLevel = 0,
   maxPointsPerSeries = 10_000,
   onVisibilityChange,
   onUserNavigate,
@@ -110,8 +112,14 @@ export function UPlotWaveform({
   const [hover, setHover] = useState<HoverReadout | null>(null);
   const [curveTooltip, setCurveTooltip] = useState<SeriesTooltip | null>(null);
   const [legendTooltip, setLegendTooltip] = useState<SeriesTooltip | null>(null);
-  const aligned = useMemo(() => alignPlotSeries(series, maxPointsPerSeries), [series, maxPointsPerSeries]);
-  const yRange = useMemo(() => calculateYRange(series, yScale, yZoomRatio), [series, yScale, yZoomRatio]);
+  const aligned = useMemo(
+    () => alignPlotSeries(series, maxPointsPerSeries, smoothLevel),
+    [series, maxPointsPerSeries, smoothLevel],
+  );
+  const yRange = useMemo(
+    () => calculateYRange(aligned.series, yScale, yZoomRatio),
+    [aligned.series, yScale, yZoomRatio],
+  );
   const firstTime = aligned.data[0][0];
   const lastTime = aligned.data[0].at(-1);
   fullRangeRef.current = firstTime == null || lastTime == null ? null : [firstTime, lastTime];
@@ -306,6 +314,6 @@ export function UPlotWaveform({
       <strong>{hover ? new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hour12: false }).format(hover.atMs) : "移动光标查看读数"}</strong>
       {hover?.values.map((item) => <span title={`${item.description} · 来源：${item.sourceLabel} · 单位：${item.unit}`} key={item.id} style={{ color: item.color }}><i style={{ background: item.color }} />{item.label}<b>{displayValue(item.value, item.unit)}</b></span>)}
     </div>
-    <p className="muted">框选缩放 · Shift 拖动平移 · 滚轮连续缩放至浮点安全极限 · Shift+滚轮平移 · 双击复位双轴</p>
+    <p className="muted">框选缩放 · Shift 拖动平移 · 滚轮连续缩放至浮点安全极限 · Shift+滚轮平移 · 双击复位双轴{smoothLevel > 0 ? " · 悬停值为平滑显示值" : ""}</p>
   </section>;
 }

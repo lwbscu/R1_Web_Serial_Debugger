@@ -1,5 +1,5 @@
 import type { ChassisFrame, RemoteFrame } from "../../protocols";
-import { chassisNrfStatus, diagnoseLink, locationStatus, remoteLinkStatus } from "./diagnosis";
+import { chassisNrfStatus, diagnoseLink, locationStatus, modeStateMismatch, remoteLinkStatus } from "./diagnosis";
 
 export type DiagnosticStatus = "normal" | "warn" | "error" | "unknown";
 
@@ -102,6 +102,37 @@ export const chassisNrfMetricSpecs: readonly MetricSpec[] = [
   simple("diag_drop_count", "CDBG drops", "diag_drop_count", "帧", sourceTip("USART2 忙导致的 CDBG 丢帧数。", "0", ">0 表示遥测带宽受限。", "检查串口忙、输出频率和调试负载。", "ChassisFrame.diagDropCount"), ({ chassis }) => field(chassis, "diagDropCount"), int, (v) => missing(v) ? "unknown" : Number(v) > 0 ? "warn" : "normal"),
 ];
 
+const liveAgeStatus = (value: unknown): DiagnosticStatus => ageStatus(value, 300, 1000);
+
+/** CDBG v3: reception/task/hardware observability. Cumulative history is yellow, never red. */
+export const wirelessReceiveMetricSpecs: readonly MetricSpec[] = [
+  simple("v3_link_alive", "链路当前在线", "link_alive / raw_score", "", sourceTip("底盘按原始收包评分判定的当前链路。", "link_alive=1 且评分稳定。", "当前离线或评分降为 0。", "对齐遥控器 RDBG，并检查任务 heartbeat、SPI 与寄存器。", "ChassisFrame.linkAlive/rawScore"), ({ chassis }) => fields(chassis, "linkAlive", "rawScore"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `${Number(v[0]) ? "在线" : "离线"} / score=${v[1]}`, (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Number(v[0]) === 0 ? "error" : Number(v[1]) < 30 ? "warn" : "normal"),
+  simple("v3_frame_flow", "NRF 帧流", "last_frame_type / valid / bad / width_err", "帧", sourceTip("最近帧类型以及有效、坏帧、动态长度错误累计值。", "有效帧持续增长，错误不增长。", "错误历史会标黄；新增长由事件标红。", "结合同一时刻 CEVT、heartbeat 与寄存器快照。", "ChassisFrame.lastFrameType/validFrameCount/badFrameCount/rxWidthErrorCount"), ({ chassis }) => fields(chassis, "lastFrameType", "validFrameCount", "badFrameCount", "rxWidthErrorCount"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `type=${v[0]} · ok=${v[1]} · bad=${v[2]} · width=${v[3]}`, (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Number(v[2]) > 0 || Number(v[3]) > 0 ? "warn" : "normal"),
+  simple("v3_packet_classes", "分类帧年龄", "adc/mode/key/task age", "ms", sourceTip("ADC、模式、按键和任务包最近到达年龄。", "需要的包类在操作时及时刷新。", "ADC 超时会直接导致遥控无响应；其他类需结合操作判断。", "先确认总帧流，再看单类是否缺失。", "ChassisFrame.adcAgeMs/modeFrameAgeMs/keyAgeMs/taskFrameAgeMs"), ({ chassis }) => fields(chassis, "adcAgeMs", "modeFrameAgeMs", "keyAgeMs", "taskFrameAgeMs"), (v) => tuple(v, 0), (v, c) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Number(v[0]) > 1000 && Number(field(c.chassis, "linkAlive")) === 1 ? "error" : Number(v[0]) > 300 ? "warn" : "normal"),
+  simple("v3_task_heartbeats", "任务 Heartbeat", "nrf_update / nrf_ack / chassis / commun age", "ms", sourceTip("四条关键任务最后运行年龄。", "每条都持续低于 300 ms。", "超过 1 s 表示对应任务可能阻塞。", "按最先超时的任务定位 RTOS 阻塞点。", "ChassisFrame.*HeartbeatAgeMs"), ({ chassis }) => fields(chassis, "nrfUpdateHeartbeatAgeMs", "nrfAckHeartbeatAgeMs", "chassisUpdateHeartbeatAgeMs", "communHeartbeatAgeMs"), (v) => tuple(v, 0), (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Math.max(...v.map(Number)) > 1000 ? "error" : Math.max(...v.map(Number)) > 300 ? "warn" : "normal"),
+  simple("v3_ack_path", "ACK 写入", "ack_write_age / lock_fail / notify_timeout", "", sourceTip("ACK payload 最近写入年龄及锁/通知失败历史。", "写入持续刷新且历史错误为 0。", "当前年龄超时为红，历史累计为黄。", "检查 NrfAck 调度、mutex 和通知等待。", "ChassisFrame.ackWriteAgeMs/ackLockFailCount/ackNotifyTimeoutCount"), ({ chassis }) => fields(chassis, "ackWriteAgeMs", "ackLockFailCount", "ackNotifyTimeoutCount"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `age=${v[0]} ms · lock=${v[1]} · notify=${v[2]}`, (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Number(v[0]) > 1000 ? "error" : Number(v[0]) > 300 || Number(v[1]) > 0 || Number(v[2]) > 0 ? "warn" : "normal"),
+  simple("v3_link_edges", "链路边沿历史", "raw_lost / scan_timeout / weak / recover", "次", sourceTip("链路丢失、扫描超时、弱链与恢复累计次数。", "稳定运行时不增长。", "非零只代表历史，显示黄色。", "查看 CEVT_NRF_LINK 确认最近一次边沿。", "ChassisFrame.link*Count"), ({ chassis }) => fields(chassis, "linkRawLostCount", "linkScanTimeoutCount", "linkWeakScanCount", "linkRecoverCount"), (v) => tuple(v, 0), (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : v.some((item) => Number(item) > 0) ? "warn" : "normal"),
+  simple("v3_spi_errors", "NRF SPI 错误历史", "nrf_spi_error_count / last_age", "", sourceTip("NRF SPI 调用错误累计值与距最近错误时间。", "累计为 0。", "非零历史为黄；近期错误由 age 判红。", "检查 SPI、CSN/CE、供电及任务互斥。", "ChassisFrame.nrfSpiErrorCount/nrfSpiLastErrorAgeMs"), ({ chassis }) => fields(chassis, "nrfSpiErrorCount", "nrfSpiLastErrorAgeMs"), (v) => !Array.isArray(v) || v.every(missing) ? "—" : `count=${v[0] ?? "—"} · age=${v[1] ?? "—"} ms`, (v) => !Array.isArray(v) || missing(v[0]) ? "unknown" : !missing(v[1]) && Number(v[1]) <= 1000 ? "error" : Number(v[0]) > 0 ? "warn" : "normal"),
+  simple("v3_nrf_registers", "NRF 寄存器快照", "reg_age / mismatch / pack0..2", "", sourceTip("在 NrfUpdate 持锁时每秒采集的寄存器快照。", "mismatch=0 且快照年龄正常。", "当前 mismatch 为红；无法采样显示未知。", "按 mismatch 位与三个 pack 对照 CONFIG、信道和动态载荷。", "ChassisFrame.nrfReg*"), ({ chassis }) => fields(chassis, "nrfRegAgeMs", "nrfRegMismatchMask", "nrfRegPack0", "nrfRegPack1", "nrfRegPack2"), (v) => !Array.isArray(v) || missing(v[0]) ? "—" : `age=${v[0]} ms · mismatch=${missing(v[1]) ? "—" : `0x${Number(v[1]).toString(16)}`} · ${v.slice(2).map((x) => missing(x) ? "—" : `0x${Number(x).toString(16).padStart(8, "0")}`).join(" / ")}`, (v) => !Array.isArray(v) || missing(v[0]) || missing(v[1]) ? "unknown" : Number(v[1]) !== 0 ? "error" : Number(v[0]) > 2000 ? "warn" : "normal"),
+];
+
+/** CDBG v3: requested remote mode versus the state actually applied by the chassis. */
+export const modeSyncMetricSpecs: readonly MetricSpec[] = [
+  simple("v3_mode_tuple", "模式三元组", "remote_mode / live_mode / chassis_state", "", sourceTip("遥控帧模式、最新实时遥控模式与底盘实际状态；两套枚举数值不同。", "自由/走点/锁定模式映射到对应底盘状态；高层任务模式只展示，不强行映射。", "实时模式与底盘状态的有效映射不一致为当前故障。", "确认底盘重启后是否收到新的 MODE 帧。", "ChassisFrame.remoteMode/activeRemoteModeLive/chassisState"), ({ chassis }) => fields(chassis, "remoteMode", "activeRemoteModeLive", "chassisState"), (v) => !Array.isArray(v) || v.every(missing) ? "—" : `frame=${v[0] ?? "—"} · live=${v[1] ?? "—"} · chassis=${v[2] ?? "—"}`, (v) => !Array.isArray(v) || missing(v[1]) || missing(v[2]) ? "unknown" : modeStateMismatch(Number(v[1]), Number(v[2])) ? "error" : !missing(v[0]) && Number(v[0]) !== Number(v[1]) ? "warn" : "normal"),
+  simple("v3_state_queue", "状态队列", "state_q / enqueue_drop", "", sourceTip("待应用状态队列深度和入队失败累计数。", "队列很快归零且无 drop。", "当前积压为红；历史 drop 为黄。", "检查状态消费者 heartbeat 和模式投递。", "ChassisFrame.stateQ/stateEnqueueDropCount"), ({ chassis }) => fields(chassis, "stateQ", "stateEnqueueDropCount"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `queued=${v[0]} · drops=${v[1]}`, (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Number(v[0]) > 0 ? "error" : Number(v[1]) > 0 ? "warn" : "normal"),
+  simple("v3_state_apply_age", "最近状态应用", "last_state_apply_age_ms", "ms", sourceTip("距离底盘最近一次应用模式状态的时间。", "MODE 操作后及时归零。", "操作期间长时间不刷新。", "对齐 MODE_SYNC 事件与 mode_frame_age。", "ChassisFrame.lastStateApplyAgeMs"), ({ chassis }) => field(chassis, "lastStateApplyAgeMs"), int, liveAgeStatus),
+  simple("v3_mode_frame", "MODE 帧", "mode_frame_age / count", "", sourceTip("最近 MODE 帧年龄和累计接收数。", "切换模式时 count 增长且 age 归零。", "链路在线但切换时没有增长。", "检查遥控器包类型与底盘分类帧计数。", "ChassisFrame.modeFrameAgeMs/modeFrameCount"), ({ chassis }) => fields(chassis, "modeFrameAgeMs", "modeFrameCount"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `age=${v[0]} ms · count=${v[1]}`, (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Number(v[0]) > 1000 ? "warn" : "normal"),
+];
+
+/** CDBG v3: ACT queue -> USART1 -> mechanism feedback path. */
+export const mechanismMetricSpecs: readonly MetricSpec[] = [
+  simple("v3_action_queue", "ACT 动作队列", "enqueue_ok / drop / dequeue / age", "", sourceTip("ACT 入队成功/失败、出队数和最近出队年龄。", "动作时 ok 与 dequeue 同步增长。", "队列 drop 历史为黄；动作未出队需结合 Commun heartbeat。", "单次安全动作后对齐 MECH_CMD 事件。", "ChassisFrame.action*"), ({ chassis }) => fields(chassis, "actionEnqueueOkCount", "actionEnqueueDropCount", "actionDequeueCount", "actionDequeueAgeMs"), (v) => !Array.isArray(v) || v.slice(0, 3).some(missing) ? "—" : `in=${v[0]} · drop=${v[1]} · out=${v[2]} · age=${v[3] ?? "—"} ms`, (v) => !Array.isArray(v) || v.slice(0, 3).some(missing) ? "unknown" : Number(v[1]) > 0 ? "warn" : "normal"),
+  simple("v3_mech_tx", "USART1 机构发送", "start / ok / fail / in_flight / duration / status", "", sourceTip("机构发送开始、成功、失败、当前阻塞年龄与最近状态。", "发送迅速完成且成功计数增长。", "当前 in-flight 超时或 HAL 状态异常为红；失败历史为黄。", "检查 HAL_UART_Transmit 前后 MECH_TX 事件。", "ChassisFrame.mechTx*"), ({ chassis }) => fields(chassis, "mechTxStartCount", "mechTxOkCount", "mechTxFailCount", "mechTxInFlightAgeMs", "mechTxLastDurationMs", "mechTxLastStatus"), (v) => !Array.isArray(v) || v.slice(0, 3).some(missing) ? "—" : `start=${v[0]} · ok=${v[1]} · fail=${v[2]} · active=${v[3] ?? "—"} ms · last=${v[4] ?? "—"} ms/${v[5] ?? "—"}`, (v) => !Array.isArray(v) || v.slice(0, 3).some(missing) ? "unknown" : !missing(v[3]) && Number(v[3]) > 1000 ? "error" : !missing(v[5]) && Number(v[5]) !== 0 ? "error" : Number(v[2]) > 0 ? "warn" : "normal"),
+  simple("v3_uart1_state", "USART1 当前状态", "g_state / rx_state / error_code", "", sourceTip("HAL UART1 全局状态、接收状态与当前错误码。", "错误码为 0，状态不长期 BUSY。", "当前 error_code 非 0 为红。", "结合 UART1_ERR 事件和发送 in-flight 年龄。", "ChassisFrame.uart1GState/uart1RxState/uart1ErrorCode"), ({ chassis }) => fields(chassis, "uart1GState", "uart1RxState", "uart1ErrorCode"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `g=${v[0]} · rx=${v[1]} · err=0x${Number(v[2]).toString(16)}`, (v) => !Array.isArray(v) || tupleMissing(v) ? "unknown" : Number(v[2]) !== 0 ? "error" : "normal"),
+  simple("v3_mech_feedback", "机构反馈", "ok / bad / queue_drop / age", "", sourceTip("机构板反馈校验、队列投递和最近有效反馈年龄。", "动作后 RX 字节到达且 ok 增长。", "坏帧/drop 历史为黄；动作后长期无反馈需结合发送时刻。", "检查 F5…5F、接线、机构板供电与反馈队列。", "ChassisFrame.mechFeedback*"), ({ chassis }) => fields(chassis, "mechFeedbackOkCount", "mechFeedbackBadCount", "mechFeedbackQueueDropCount", "mechFeedbackAgeMs"), (v) => !Array.isArray(v) || v.slice(0, 3).some(missing) ? "—" : `ok=${v[0]} · bad=${v[1]} · drop=${v[2]} · age=${v[3] ?? "—"} ms`, (v) => !Array.isArray(v) || v.slice(0, 3).some(missing) ? "unknown" : Number(v[1]) > 0 || Number(v[2]) > 0 ? "warn" : "normal"),
+  simple("v3_uart1_rx", "USART1 接收与重挂", "error / rearm_ok / rearm_fail / bytes / age", "", sourceTip("UART1 错误、接收中断重挂与收到字节的累计/年龄。", "重挂成功、无当前错误，动作后字节增长。", "重挂失败历史为黄；近期 UART 错误事件为红。", "检查 USART1 RX、共地、波特率及回调执行。", "ChassisFrame.uart1*Count/uart1RxByteAgeMs"), ({ chassis }) => fields(chassis, "uart1ErrorCount", "uart1RearmOkCount", "uart1RearmFailCount", "uart1RxByteCount", "uart1RxByteAgeMs"), (v) => !Array.isArray(v) || v.slice(0, 4).some(missing) ? "—" : `err=${v[0]} · rearm=${v[1]}/${v[2]} · bytes=${v[3]} · age=${v[4] ?? "—"} ms`, (v) => !Array.isArray(v) || v.slice(0, 4).some(missing) ? "unknown" : Number(v[0]) > 0 || Number(v[2]) > 0 ? "warn" : "normal"),
+];
+
 const locationTip = (meaning: string, normal: string, abnormal: string, check: string, source: string) => tip(meaning, normal, abnormal, check, source);
 const quad = (chassis: ChassisFrame | null, stem: string) => fields(chassis, `${stem}1`, `${stem}2`, `${stem}3`, `${stem}4`);
 
@@ -125,9 +156,21 @@ export const locationMetricSpecs: readonly MetricSpec[] = [
   simple("can_tx_err", "CAN TX errors", "can_tx_err", "次", locationTip("CAN 发送错误累计数。", "0", ">0。", "检查总线占用、仲裁、接线和终端。", "ChassisFrame.canTxErr"), ({ chassis }) => field(chassis, "canTxErr"), int, countStatus),
 ];
 
+const aggregateStatus = (specs: readonly MetricSpec[], context: MetricContext): DiagnosticStatus => {
+  if (!context.chassis) return "unknown";
+  const rank: Record<DiagnosticStatus, number> = { unknown: 0, normal: 1, warn: 2, error: 3 };
+  return specs.reduce<DiagnosticStatus>((worst, spec) => {
+    const next = spec.evaluator?.(spec.getter(context), context) ?? "unknown";
+    return rank[next] > rank[worst] ? next : worst;
+  }, "normal");
+};
+
 export const panelStatus = {
   remote: ({ remote }: MetricContext) => remoteLinkStatus(remote),
   chassis: chassisNrfStatus,
+  wireless: (context: MetricContext) => aggregateStatus(wirelessReceiveMetricSpecs, context),
+  mode: (context: MetricContext) => aggregateStatus(modeSyncMetricSpecs, context),
+  mechanism: (context: MetricContext) => aggregateStatus(mechanismMetricSpecs, context),
   location: ({ chassis }: MetricContext) => locationStatus(chassis),
 };
 

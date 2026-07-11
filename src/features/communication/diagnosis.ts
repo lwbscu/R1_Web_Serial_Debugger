@@ -21,6 +21,23 @@ const numberField = (frame: ChassisFrame | null, name: string): number | null =>
 const maxAbs = (...values: Array<number | null>): number | null =>
   values.some((value) => value === null) ? null : Math.max(...values.map((value) => Math.abs(value!)));
 
+/**
+ * RemoteMode_t and ChassisState_t intentionally use different numeric values.
+ * Only FREEDOM/POINT/LOCK directly command a chassis state; MERLIN,
+ * THREE_ZONE, R2 and V are higher-level modes whose state varies by command.
+ */
+export function expectedChassisStateForRemoteMode(remoteMode: number | null): number | null {
+  if (remoteMode === 0) return 0; // MODE_FREEDOM -> CHASSIS_FREE
+  if (remoteMode === 1) return 2; // MODE_POINT -> CHASSIS_POINT
+  if (remoteMode === 2) return 1; // MODE_LOCK -> CHASSIS_LOCK
+  return null;
+}
+
+export function modeStateMismatch(remoteMode: number | null, chassisState: number | null): boolean {
+  const expected = expectedChassisStateForRemoteMode(remoteMode);
+  return expected !== null && chassisState !== null && expected !== chassisState;
+}
+
 export function remoteLinkStatus(remote: RemoteFrame | null): DiagnosticStatus {
   if (!remote) return "unknown";
   if (remote.signalBars === 0 || remote.xReason !== "none" || remote.noAckMs >= 300) return "error";
@@ -30,6 +47,12 @@ export function remoteLinkStatus(remote: RemoteFrame | null): DiagnosticStatus {
 
 export function chassisNrfStatus({ remote, chassis }: MetricContext): DiagnosticStatus {
   if (!chassis) return "unknown";
+  if (
+    (numberField(chassis, "nrfRegMismatchMask") ?? 0) !== 0 ||
+    (numberField(chassis, "nrfUpdateHeartbeatAgeMs") ?? 0) > 1000 ||
+    (numberField(chassis, "nrfAckHeartbeatAgeMs") ?? 0) > 1000 ||
+    ((numberField(chassis, "linkAlive") ?? 0) === 1 && (numberField(chassis, "adcAgeMs") ?? 0) > 1000)
+  ) return "error";
   const signalAge = numberField(chassis, "lastSigAgeMs");
   const rawAge = numberField(chassis, "lastRawAgeMs");
   const joyAge = numberField(chassis, "joyAgeMs");
@@ -89,6 +112,71 @@ export function diagnoseLink({ remote, chassis }: MetricContext): DiagnosisResul
     return signalAge !== null && signalAge <= 300
       ? { text: "Chassis receives remote packets; remote debug port is not connected or is occupied.", status: "warn" }
       : { text: "Only chassis CDBG is present; remote RDBG is needed to compare TX/ACK behavior.", status: "warn" };
+  }
+
+  if ((numberField(chassis, "protocolVersion") ?? 0) >= 3) {
+    const heartbeatChecks: Array<[string, string]> = [
+      ["nrfUpdateHeartbeatAgeMs", "NrfUpdate"], ["nrfAckHeartbeatAgeMs", "NrfAck"],
+      ["chassisUpdateHeartbeatAgeMs", "ChassisUpdate"], ["communHeartbeatAgeMs", "Commun"],
+    ];
+    for (const [field, label] of heartbeatChecks) {
+      const age = numberField(chassis, field);
+      if (age !== null && age > 1000) return { text: `${label} task heartbeat is ${age} ms old: this task is stalled or blocked.`, status: "error" };
+    }
+    const mismatch = numberField(chassis, "nrfRegMismatchMask");
+    if (mismatch !== null && mismatch !== 0) {
+      return { text: `NRF register snapshot currently mismatches expected configuration (mask=0x${mismatch.toString(16)}).`, status: "error" };
+    }
+    const spiErrorAge = numberField(chassis, "nrfSpiLastErrorAgeMs");
+    if (spiErrorAge !== null && spiErrorAge <= 1000) {
+      return { text: `A recent NRF SPI error occurred ${spiErrorAge} ms ago; inspect SPI, CSN/CE, power, and mutex ownership.`, status: "error" };
+    }
+    const linkAlive = numberField(chassis, "linkAlive") === 1;
+    const adcAge = numberField(chassis, "adcAgeMs");
+    if (linkAlive && adcAge !== null && adcAge > 1000) {
+      return { text: `The radio link is alive but ADC joystick frames are missing (${adcAge} ms): packet-class reception failed.`, status: "error" };
+    }
+    const liveMode = numberField(chassis, "activeRemoteModeLive");
+    const appliedMode = numberField(chassis, "chassisState");
+    if (modeStateMismatch(liveMode, appliedMode)) {
+      return { text: `Mode is out of sync: remote live mode=${liveMode}, chassis state=${appliedMode}. Send/observe a MODE frame after restart.`, status: "error" };
+    }
+    const stateQ = numberField(chassis, "stateQ");
+    const applyAge = numberField(chassis, "lastStateApplyAgeMs");
+    if ((stateQ ?? 0) > 0 && (applyAge ?? 0) > 1000) {
+      return { text: `Mode state queue is not draining (queued=${stateQ}, last apply ${applyAge} ms ago).`, status: "error" };
+    }
+    const txInFlightAge = numberField(chassis, "mechTxInFlightAgeMs");
+    if (txInFlightAge !== null && txInFlightAge > 1000) {
+      return { text: `Mechanism USART1 transmit has been in flight for ${txInFlightAge} ms; the communication task is blocked in the existing send path.`, status: "error" };
+    }
+    const uartError = numberField(chassis, "uart1ErrorCode");
+    if (uartError !== null && uartError !== 0) {
+      return { text: `Mechanism USART1 currently reports HAL error code 0x${uartError.toString(16)}.`, status: "error" };
+    }
+    const enqueued = numberField(chassis, "actionEnqueueOkCount");
+    const dequeued = numberField(chassis, "actionDequeueCount");
+    if (enqueued !== null && dequeued !== null && enqueued > dequeued) {
+      return { text: `An ACT command reached the chassis but has not left actionCmdQueue (accepted=${enqueued}, dequeued=${dequeued}).`, status: "warn" };
+    }
+    const txStarted = numberField(chassis, "mechTxStartCount");
+    const rxBytes = numberField(chassis, "uart1RxByteCount");
+    const feedbackOk = numberField(chassis, "mechFeedbackOkCount");
+    if ((txStarted ?? 0) > 0 && (rxBytes ?? 0) === 0) {
+      return { text: "Mechanism commands were transmitted but USART1 has never received a return byte: check mechanism power, TX/RX, GND, and firmware.", status: "warn" };
+    }
+    if ((rxBytes ?? 0) > 0 && (feedbackOk ?? 0) === 0) {
+      return { text: "USART1 receives bytes but no valid mechanism feedback frame has passed validation.", status: "warn" };
+    }
+    const historyFields = [
+      "stateEnqueueDropCount", "badFrameCount", "rxWidthErrorCount", "ackLockFailCount",
+      "ackNotifyTimeoutCount", "nrfSpiErrorCount", "actionEnqueueDropCount", "mechTxFailCount",
+      "mechFeedbackBadCount", "mechFeedbackQueueDropCount", "uart1ErrorCount", "uart1RearmFailCount",
+    ];
+    const historical = historyFields.filter((field) => (numberField(chassis, field) ?? 0) > 0);
+    if (historical.length > 0) {
+      return { text: `Historical diagnostic counters are non-zero (${historical.join(", ")}); inspect nearby CEVT edges for recent growth.`, status: "warn" };
+    }
   }
 
   const remoteStatus = remoteLinkStatus(remote);

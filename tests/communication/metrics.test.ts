@@ -3,8 +3,11 @@ import type { ChassisFrame, RemoteFrame } from "../../src/protocols";
 import {
   chassisNrfMetricSpecs,
   locationMetricSpecs,
+  mechanismMetricSpecs,
+  modeSyncMetricSpecs,
   panelStatus,
   remoteMetricSpecs,
+  wirelessReceiveMetricSpecs,
   type MetricContext,
 } from "../../src/features/communication/metrics";
 import { generateHtmlDiagnosticReport, generateMarkdownDiagnosticReport } from "../../src/features/communication/reports";
@@ -34,12 +37,43 @@ describe("Python-equivalent metric configuration", () => {
     expect(remoteMetricSpecs).toHaveLength(11);
     expect(chassisNrfMetricSpecs).toHaveLength(15);
     expect(locationMetricSpecs).toHaveLength(17);
-    for (const item of [...remoteMetricSpecs, ...chassisNrfMetricSpecs, ...locationMetricSpecs]) {
+    expect(wirelessReceiveMetricSpecs).toHaveLength(8);
+    expect(modeSyncMetricSpecs).toHaveLength(4);
+    expect(mechanismMetricSpecs).toHaveLength(5);
+    for (const item of [...remoteMetricSpecs, ...chassisNrfMetricSpecs, ...wirelessReceiveMetricSpecs, ...modeSyncMetricSpecs, ...mechanismMetricSpecs, ...locationMetricSpecs]) {
       expect(item.key).toBeTruthy();
       expect(item.title).toBeTruthy();
       expect(item.variable).toBeTruthy();
       expect(Object.values(item.tooltip).every((value) => value.trim().length > 0)).toBe(true);
     }
+  });
+
+  it("keeps historical v3 counters yellow while current faults are red", () => {
+    const base = chassis({
+      protocolVersion: 3, fieldCount: 151, linkAlive: 1, rawScore: 90,
+      lastFrameType: 1, validFrameCount: 10, badFrameCount: 0, rxWidthErrorCount: 0,
+      adcAgeMs: 10, modeFrameAgeMs: 10, keyAgeMs: 10, taskFrameAgeMs: 10,
+      nrfUpdateHeartbeatAgeMs: 10, nrfAckHeartbeatAgeMs: 10, chassisUpdateHeartbeatAgeMs: 10,
+      communHeartbeatAgeMs: 10, ackWriteAgeMs: 10, ackLockFailCount: 0, ackNotifyTimeoutCount: 0,
+      linkRawLostCount: 0, linkScanTimeoutCount: 0, linkWeakScanCount: 0, linkRecoverCount: 0,
+      nrfSpiErrorCount: 0, nrfSpiLastErrorAgeMs: null, nrfRegAgeMs: 10,
+      nrfRegMismatchMask: 0, nrfRegPack0: 1, nrfRegPack1: 2, nrfRegPack2: 3,
+      remoteMode: 0, activeRemoteModeLive: 0, chassisState: 0, stateQ: 0,
+      stateEnqueueDropCount: 0, lastStateApplyAgeMs: 10, modeFrameCount: 1,
+      actionEnqueueOkCount: 0, actionEnqueueDropCount: 0, actionDequeueCount: 0,
+      actionDequeueAgeMs: null, mechTxStartCount: 0, mechTxOkCount: 0, mechTxFailCount: 0,
+      mechTxInFlightAgeMs: null, mechTxLastDurationMs: null, mechTxLastStatus: null,
+      uart1GState: 0, uart1RxState: 0, uart1ErrorCode: 0, mechFeedbackOkCount: 0,
+      mechFeedbackBadCount: 0, mechFeedbackQueueDropCount: 0, mechFeedbackAgeMs: null,
+      uart1ErrorCount: 0, uart1RearmOkCount: 1, uart1RearmFailCount: 0,
+      uart1RxByteCount: 0, uart1RxByteAgeMs: null,
+    });
+    const spi = spec(wirelessReceiveMetricSpecs, "v3_spi_errors");
+    expect(spi.evaluator?.(spi.getter(context(remote(), { ...base, nrfSpiErrorCount: 2 })), context(remote(), base))).toBe("warn");
+    expect(spi.evaluator?.(spi.getter(context(remote(), { ...base, nrfSpiErrorCount: 2, nrfSpiLastErrorAgeMs: 100 })), context(remote(), base))).toBe("error");
+    expect(panelStatus.mode(context(remote(), { ...base, activeRemoteModeLive: 2, chassisState: 0 }))).toBe("error");
+    expect(panelStatus.mechanism(context(remote(), { ...base, actionEnqueueDropCount: 1 }))).toBe("warn");
+    expect(panelStatus.mechanism(context(remote(), { ...base, mechTxInFlightAgeMs: 1500 }))).toBe("error");
   });
 
   it("applies remote and chassis thresholds", () => {

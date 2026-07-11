@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { minMaxDecimate } from "../../src/core/telemetry";
 import {
   MIN_X_SPAN_SECONDS,
   alignPlotSeries,
@@ -7,6 +8,7 @@ import {
   clampXRange,
   describeSeries,
   minimumSafeXSpanSeconds,
+  smoothTelemetryPoints,
   zoomedXSpanSeconds,
   zoomLevelToRatio,
 } from "../../src/features/waveform/data";
@@ -37,6 +39,83 @@ describe("波形共享时间轴", () => {
       description: "左侧测距", sourceLabel: "定位板", unit: "mm", points: [{ atMs: 1, value: 100 }],
     }]);
     expect(result.series[0]).toMatchObject({ description: "左侧测距", sourceLabel: "定位板", unit: "mm" });
+  });
+});
+
+describe("仅显示层曲线平滑", () => {
+  const step = [
+    { atMs: 0, value: 0 },
+    { atMs: 100, value: 0 },
+    { atMs: 200, value: 10 },
+    { atMs: 300, value: 10 },
+  ] as const;
+
+  it("0 严格保持原始数值且不修改输入", () => {
+    const original = step.map((point) => ({ ...point }));
+    const result = smoothTelemetryPoints(step, 0);
+    expect(result).toEqual(step);
+    expect(step).toEqual(original);
+    expect(result).not.toBe(step);
+  });
+
+  it("中间值平滑阶跃，1 最平滑但仍持续更新", () => {
+    const middle = smoothTelemetryPoints(step, .5);
+    const maximum = smoothTelemetryPoints(step, 1);
+    expect(middle[2]!.value).toBeGreaterThan(0);
+    expect(middle[2]!.value).toBeLessThan(10);
+    expect(maximum[2]!.value).toBeGreaterThan(0);
+    expect(maximum[3]!.value).toBeGreaterThan(maximum[2]!.value);
+    expect(maximum[2]!.value).toBeLessThan(middle[2]!.value);
+  });
+
+  it("偏置修正让常值序列从首点起保持常值", () => {
+    const result = smoothTelemetryPoints([
+      { atMs: 0, value: 42 },
+      { atMs: 20, value: 42 },
+      { atMs: 40, value: 42 },
+    ], 1);
+    result.forEach((point) => expect(point.value).toBeCloseTo(42, 12));
+  });
+
+  it("遇到时间倒退或过大空洞时重置 EMA", () => {
+    const result = smoothTelemetryPoints([
+      { atMs: 0, value: 0 },
+      { atMs: 100, value: 10 },
+      { atMs: 200, value: 10 },
+      { atMs: 1_301, value: 50 },
+      { atMs: 1_401, value: 60 },
+      { atMs: 1_000, value: 80 },
+    ], .8);
+    expect(result[3]!.value).toBe(50);
+    expect(result[4]!.value).toBeGreaterThan(50);
+    expect(result[4]!.value).toBeLessThan(60);
+    expect(result[5]!.value).toBe(80);
+  });
+
+  it("每条曲线独立平滑，并且先平滑再做 min/max 降采样", () => {
+    const first = Array.from({ length: 40 }, (_, index) => ({ atMs: index * 100, value: index === 20 ? 100 : 0 }));
+    const second = Array.from({ length: 40 }, (_, index) => ({ atMs: index * 100, value: 7 }));
+    const expectedFirst = smoothTelemetryPoints(first, .7);
+    const result = alignPlotSeries([
+      { id: "remote:signalBars", label: "first", color: "#fff", visible: true, points: first },
+      { id: "chassis:ackScore", label: "second", color: "#000", visible: true, points: second },
+    ], 10, .7);
+
+    expect(result.series[0]!.points).toEqual(minMaxDecimate(expectedFirst, 10));
+    result.series[1]!.points.forEach((point) => expect(point.value).toBeCloseTo(7, 12));
+    expect(first[20]!.value).toBe(100);
+  });
+
+  it("自动 Y 量程可直接使用平滑后的显示序列", () => {
+    const raw = [{ atMs: 0, value: 0 }, { atMs: 100, value: 100 }, { atMs: 200, value: 0 }];
+    const displayed = alignPlotSeries([
+      { id: "remote:signalBars", label: "signal", color: "#fff", visible: true, points: raw },
+    ], 10, 1).series;
+    const rawRange = calculateYRange([
+      { id: "remote:signalBars", label: "signal", color: "#fff", visible: true, points: raw },
+    ], { kind: "auto" });
+    const displayRange = calculateYRange(displayed, { kind: "auto" });
+    expect(displayRange[1]).toBeLessThan(rawRange[1]);
   });
 });
 

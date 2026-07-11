@@ -1,9 +1,22 @@
 .waveform-workspace .scope-zoom-controls {
   position: relative;
   overflow: hidden;
+  grid-template-columns: repeat(3, minmax(200px, 1fr)) auto;
   background:
     linear-gradient(90deg, rgba(48, 214, 168, 0.045), transparent 35%, rgba(68, 157, 255, 0.035)),
     rgba(10, 20, 28, 0.86);
+}
+
+@media (max-width: 1250px) and (min-width: 901px) {
+  .waveform-workspace .scope-zoom-controls {
+    grid-template-columns: repeat(2, minmax(240px, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .waveform-workspace .scope-zoom-controls {
+    grid-template-columns: 1fr;
+  }
 }
 
 .waveform-workspace .scope-zoom-controls::before {

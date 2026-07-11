@@ -18,10 +18,68 @@ export interface AlignedPlotData {
   series: PlotSeriesInput[];
 }
 
-export function alignPlotSeries(inputs: readonly PlotSeriesInput[], maxPointsPerSeries = 10_000): AlignedPlotData {
+export const MAX_SMOOTH_WEIGHT = 0.999;
+
+/**
+ * Bias-corrected exponential moving average used only by the rendered plot.
+ *
+ * Each call is stateless by design: replaying the same visible window always
+ * produces the same pixels. A discontinuity starts a new EMA segment so an
+ * old value is never visually carried across a missing-data interval.
+ */
+export function smoothTelemetryPoints(
+  points: readonly TelemetryPoint[],
+  strength: number,
+): TelemetryPoint[] {
+  const level = Math.min(1, Math.max(0, Number.isFinite(strength) ? strength : 0));
+  if (level === 0) return [...points];
+
+  const retainedWeight = MAX_SMOOTH_WEIGHT * level;
+  const currentWeight = 1 - retainedWeight;
+  let weightedSum = 0;
+  let totalWeight = 0;
+  let previousAtMs: number | null = null;
+  let previousNormalIntervalMs: number | null = null;
+
+  return points.map((point) => {
+    const deltaMs = previousAtMs === null ? null : point.atMs - previousAtMs;
+    const gapLimitMs = Math.max(1000, 10 * (previousNormalIntervalMs ?? 0));
+    const reset = deltaMs === null || deltaMs <= 0 || deltaMs > gapLimitMs;
+    let value = point.value;
+
+    if (!Number.isFinite(point.value)) {
+      weightedSum = 0;
+      totalWeight = 0;
+      previousNormalIntervalMs = null;
+    } else if (reset) {
+      weightedSum = currentWeight * point.value;
+      totalWeight = currentWeight;
+      previousNormalIntervalMs = null;
+    } else {
+      weightedSum = retainedWeight * weightedSum + currentWeight * point.value;
+      totalWeight = retainedWeight * totalWeight + currentWeight;
+      previousNormalIntervalMs = deltaMs;
+      value = totalWeight > 0 ? weightedSum / totalWeight : point.value;
+    }
+    previousAtMs = point.atMs;
+
+    return {
+      ...point,
+      value,
+    };
+  });
+}
+
+export function alignPlotSeries(
+  inputs: readonly PlotSeriesInput[],
+  maxPointsPerSeries = 10_000,
+  smoothLevel = 0,
+): AlignedPlotData {
   const prepared = inputs.map((input) => ({
     ...input,
-    points: minMaxDecimate(input.points, maxPointsPerSeries),
+    // Smoothing must happen before min/max decimation so every raw sample can
+    // contribute to the displayed EMA while the hub and exports remain raw.
+    points: minMaxDecimate(smoothTelemetryPoints(input.points, smoothLevel), maxPointsPerSeries),
   }));
   const timestamps = new Set<number>();
   for (const input of prepared) for (const point of input.points) timestamps.add(point.atMs / 1000);

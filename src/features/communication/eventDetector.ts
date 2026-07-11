@@ -1,4 +1,5 @@
 import type { ChassisFrame, RemoteFrame } from "../../protocols";
+import { modeStateMismatch } from "./diagnosis";
 
 export interface DiagnosticEvent {
   observedAtMs: number;
@@ -8,8 +9,8 @@ export interface DiagnosticEvent {
 }
 
 export function firmwareEventSeverity(kind: string): DiagnosticEvent["severity"] {
-  if (/^(?:NRF_LOST|MOTOR_FAULT)$/i.test(kind)) return "error";
-  if (/^AUDIO$/i.test(kind)) return "warn";
+  if (/^(?:NRF_LOST|MOTOR_FAULT|NRF_REG|UART1_ERR)$/i.test(kind)) return "error";
+  if (/^(?:AUDIO|NRF_LINK|MODE_SYNC|MECH_CMD|MECH_TX|MECH_FB)$/i.test(kind)) return "warn";
   return "info";
 }
 
@@ -33,6 +34,8 @@ export class DiagnosticEventDetector {
   private lastChassisAt: number | null = null;
   private latestRemote: RemoteFrame | null = null;
   private latestChassis: ChassisFrame | null = null;
+  private lastCounters = new Map<string, number>();
+  private lastModeMismatch = false;
 
   resetSource(source: "remote" | "chassis"): void {
     if (source === "remote") {
@@ -45,6 +48,8 @@ export class DiagnosticEventDetector {
     this.lastChassisYaw = null;
     this.lastChassisAt = null;
     this.latestChassis = null;
+    this.lastCounters.clear();
+    this.lastModeMismatch = false;
   }
 
   reset(): void {
@@ -81,6 +86,28 @@ export class DiagnosticEventDetector {
       const dt = Math.max(frame.observedAtMs - this.lastChassisAt, 1);
       const step = Math.abs(wrap180(yaw - this.lastChassisYaw));
       if (dt <= 150 && step > 30) events.push({ observedAtMs: frame.observedAtMs, kind: "YAW_SPIKE", severity: "error", detail: `yaw step ${step.toFixed(1)} deg / ${dt.toFixed(0)}ms` });
+    }
+    const liveMode = numberField(frame, "activeRemoteModeLive");
+    const chassisState = numberField(frame, "chassisState");
+    const modeMismatch = modeStateMismatch(liveMode, chassisState);
+    if (modeMismatch && !this.lastModeMismatch) {
+      events.push({ observedAtMs: frame.observedAtMs, kind: "MODE_MISMATCH", severity: "error", detail: `remote=${liveMode}, chassis=${chassisState}` });
+    } else if (!modeMismatch && this.lastModeMismatch) {
+      events.push({ observedAtMs: frame.observedAtMs, kind: "MODE_MATCH", severity: "info", detail: "remote and chassis modes match again" });
+    }
+    this.lastModeMismatch = modeMismatch;
+    for (const name of [
+      "badFrameCount", "rxWidthErrorCount", "ackLockFailCount", "ackNotifyTimeoutCount",
+      "nrfSpiErrorCount", "stateEnqueueDropCount", "actionEnqueueDropCount", "mechTxFailCount",
+      "mechFeedbackBadCount", "mechFeedbackQueueDropCount", "uart1ErrorCount", "uart1RearmFailCount",
+    ]) {
+      const current = numberField(frame, name);
+      if (current === null) continue;
+      const previous = this.lastCounters.get(name);
+      if (previous !== undefined && current > previous) {
+        events.push({ observedAtMs: frame.observedAtMs, kind: "COUNTER_GROWTH", severity: "error", detail: `${name}: ${previous} -> ${current}` });
+      }
+      this.lastCounters.set(name, current);
     }
     this.lastChassisYaw = yaw;
     this.lastChassisAt = frame.observedAtMs;

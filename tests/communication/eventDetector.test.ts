@@ -20,6 +20,9 @@ describe("DiagnosticEventDetector", () => {
     expect(firmwareEventSeverity("MODE_EXEC")).toBe("info");
     expect(firmwareEventSeverity("NRF_LOST")).toBe("error");
     expect(firmwareEventSeverity("MOTOR_FAULT")).toBe("error");
+    expect(firmwareEventSeverity("NRF_REG")).toBe("error");
+    expect(firmwareEventSeverity("UART1_ERR")).toBe("error");
+    expect(firmwareEventSeverity("MECH_TX")).toBe("warn");
     expect(firmwareEventSeverity("SOMETHING_NEW")).toBe("info");
   });
 
@@ -45,5 +48,17 @@ describe("DiagnosticEventDetector", () => {
     detector.acceptChassis(chassis({ observedAtMs: 1300, yaw: 0 }));
     detector.resetSource("chassis");
     expect(detector.acceptChassis(chassis({ observedAtMs: 1350, yaw: 90 })).map((event) => event.kind)).not.toContain("YAW_SPIKE");
+  });
+
+  it("emits red events for current mode mismatch and newly growing error counters", () => {
+    const detector = new DiagnosticEventDetector();
+    expect(detector.acceptChassis(chassis({ activeRemoteModeLive: 0, chassisState: 0, badFrameCount: 4 }))).toEqual([]);
+    const events = detector.acceptChassis(chassis({
+      observedAtMs: 1100, activeRemoteModeLive: 2, chassisState: 0, badFrameCount: 5,
+    }));
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "MODE_MISMATCH", severity: "error" }),
+      expect.objectContaining({ kind: "COUNTER_GROWTH", severity: "error", detail: "badFrameCount: 4 -> 5" }),
+    ]));
   });
 });

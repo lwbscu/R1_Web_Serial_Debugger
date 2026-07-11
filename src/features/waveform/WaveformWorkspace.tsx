@@ -72,6 +72,7 @@ export function WaveformWorkspace({ active = true }: { active?: boolean }) {
   const [yMax, setYMax] = useState("100");
   const [xZoomLevel, setXZoomLevel] = useState(0);
   const [yZoomLevel, setYZoomLevel] = useState(0);
+  const [smoothLevel, setSmoothLevel] = useState(0);
   const [search, setSearch] = useState("");
   const [demoActive, setDemoActive] = useState(false);
   const frozenRef = useRef<TelemetrySnapshot | null>(null);
@@ -160,9 +161,10 @@ export function WaveformWorkspace({ active = true }: { active?: boolean }) {
       <button title="让横轴右端持续对齐最新数据。手动框选、滚轮或平移会退出跟随。" className={followLatest ? "selected" : "secondary"} onClick={() => setFollowLatest(true)}>跟随最新</button>
     </section>
 
-    <section className="scope-zoom-controls" aria-label="坐标轴缩放">
+    <section className="scope-zoom-controls" aria-label="波形显示控制">
       <label title="按指数连续缩短可见时间窗；最大端会停在当前时间戳的 IEEE-754 浮点安全下限，不受 10 秒预设限制。"><span><strong>横轴缩放</strong><small>可见时间窗 {formatTimeSpan(visibleXSpan)}</small></span><input aria-label="横轴缩放" aria-valuetext={`可见时间窗 ${formatTimeSpan(visibleXSpan)}`} type="range" min="0" max="100" step="0.1" value={xZoomLevel} onChange={(event) => { setXZoomLevel(Number(event.target.value)); setFollowLatest(true); }} /></label>
       <label title="围绕当前自动量程或固定量程的中心缩放；向左缩小曲线，向右放大曲线。"><span><strong>纵轴缩放</strong><small>{formatZoomRatio(yZoomRatio)}</small></span><input aria-label="纵轴缩放" aria-valuetext={formatZoomRatio(yZoomRatio)} type="range" min="-100" max="100" step="0.1" value={yZoomLevel} onChange={(event) => setYZoomLevel(Number(event.target.value))} /></label>
+      <label title="使用类似 TensorBoard 的偏置修正指数移动平均让所有曲线更平滑；仅改变绘图、自动 Y 量程与悬停显示，不修改采集、诊断或导出数据。"><span><strong>曲线平滑</strong><small>{smoothLevel.toFixed(2)} · 仅影响显示</small></span><input aria-label="曲线平滑" aria-valuetext={`${smoothLevel.toFixed(2)}，仅影响显示`} type="range" min="0" max="1" step="0.01" value={smoothLevel} onChange={(event) => setSmoothLevel(Number(event.target.value))} /></label>
       <button title="恢复当前时间窗口和当前 Y 轴量程，并重新跟随最新数据。" className="secondary" type="button" onClick={() => { setXZoomLevel(0); setYZoomLevel(0); setFollowLatest(true); }}>复位双轴</button>
     </section>
 
@@ -189,7 +191,7 @@ export function WaveformWorkspace({ active = true }: { active?: boolean }) {
 
       <section className="scope-stage panel">
         <header className="scope-stage-head"><div><strong>实时波形</strong><span>{paused ? "显示已冻结，后台仍持续采集" : followLatest ? "跟随最新数据" : "已离开实时窗口"}</span></div><dl><div><dt>缓冲点</dt><dd>{telemetryHub.pointCount().toLocaleString()}</dd></div><div><dt>当前曲线点</dt><dd>{selectedPoints.toLocaleString()}</dd></div><div><dt>曲线</dt><dd>{plotSeries.length}</dd></div></dl></header>
-        {plotSeries.length === 0 ? <div className="scope-empty"><strong>选择一条或多条曲线开始观察</strong><p>可先点击“演示波形”，再使用上方快速组合；真实串口连接后字段会自动进入左侧列表。</p></div> : <UPlotWaveform series={plotSeries} yScale={yScale} xZoomRatio={xZoomRatio} yZoomRatio={yZoomRatio} followLatest={followLatest} windowMs={windowMs} throughMs={shown.acquiredThroughMs ?? Date.now()} onUserNavigate={() => setFollowLatest(false)} onResetView={() => { setXZoomLevel(0); setYZoomLevel(0); setFollowLatest(true); }} onVisibilityChange={(id, visible) => setHidden((old) => { const next = new Set(old); if (visible) next.delete(id); else next.add(id); return next; })} />}
+        {plotSeries.length === 0 ? <div className="scope-empty"><strong>选择一条或多条曲线开始观察</strong><p>可先点击“演示波形”，再使用上方快速组合；真实串口连接后字段会自动进入左侧列表。</p></div> : <UPlotWaveform series={plotSeries} yScale={yScale} xZoomRatio={xZoomRatio} yZoomRatio={yZoomRatio} smoothLevel={smoothLevel} followLatest={followLatest} windowMs={windowMs} throughMs={shown.acquiredThroughMs ?? Date.now()} onUserNavigate={() => setFollowLatest(false)} onResetView={() => { setXZoomLevel(0); setYZoomLevel(0); setFollowLatest(true); }} onVisibilityChange={(id, visible) => setHidden((old) => { const next = new Set(old); if (visible) next.delete(id); else next.add(id); return next; })} />}
       </section>
     </div>
   </main>;

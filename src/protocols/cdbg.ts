@@ -39,6 +39,45 @@ const V2_90_FIELDS = [
   "canRxCount", "canTxErr", "diagDropCount",
 ] as const;
 
+/**
+ * Frozen CDBG v3 extension.  Keep this order byte-for-byte aligned with both
+ * chassis firmware branches; a v3 frame is 3 header tokens + 87 v2 payload
+ * tokens + these 61 tokens = 151 tokens in total.
+ */
+export const V3_EXTENSION_FIELDS = [
+  "resetFlags", "linkAlive", "rawScore", "chassisState", "activeRemoteModeLive", "stateQ",
+  "stateEnqueueDropCount", "lastStateApplyAgeMs", "lastFrameType", "validFrameCount",
+  "badFrameCount", "rxWidthErrorCount", "adcAgeMs", "adcCount", "modeFrameAgeMs",
+  "modeFrameCount", "keyAgeMs", "keyCount", "taskFrameAgeMs", "taskFrameCount",
+  "nrfUpdateHeartbeatAgeMs", "nrfAckHeartbeatAgeMs", "chassisUpdateHeartbeatAgeMs",
+  "communHeartbeatAgeMs", "ackWriteAgeMs", "ackLockFailCount", "ackNotifyTimeoutCount",
+  "linkRawLostCount", "linkScanTimeoutCount", "linkWeakScanCount", "linkRecoverCount",
+  "scoreZeroMs", "nrfSpiErrorCount", "nrfSpiLastErrorAgeMs", "nrfRegAgeMs",
+  "nrfRegMismatchMask", "nrfRegPack0", "nrfRegPack1", "nrfRegPack2",
+  "actionEnqueueOkCount", "actionEnqueueDropCount", "actionDequeueCount", "actionDequeueAgeMs",
+  "mechTxStartCount", "mechTxOkCount", "mechTxFailCount", "mechTxInFlightAgeMs",
+  "mechTxLastDurationMs", "mechTxLastStatus", "uart1GState", "uart1RxState", "uart1ErrorCode",
+  "mechFeedbackOkCount", "mechFeedbackBadCount", "mechFeedbackQueueDropCount",
+  "mechFeedbackAgeMs", "uart1ErrorCount", "uart1RearmOkCount", "uart1RearmFailCount",
+  "uart1RxByteCount", "uart1RxByteAgeMs",
+] as const;
+
+const UINT32_SENTINEL_FIELDS = new Set<string>([
+  "lastSigAgeMs", "lastRawAgeMs", "joyAgeMs", "modeAgeMs", "lastModeExecMs",
+  "audioAgeMs", "locFrameAgeMs", "mAge1", "mAge2", "mAge3", "mAge4",
+  "lastStateApplyAgeMs", "adcAgeMs", "modeFrameAgeMs", "keyAgeMs", "taskFrameAgeMs",
+  "nrfUpdateHeartbeatAgeMs", "nrfAckHeartbeatAgeMs", "chassisUpdateHeartbeatAgeMs",
+  "communHeartbeatAgeMs", "ackWriteAgeMs", "scoreZeroMs", "nrfSpiLastErrorAgeMs",
+  "nrfRegAgeMs", "nrfRegMismatchMask", "nrfRegPack0", "nrfRegPack1", "nrfRegPack2",
+  "actionDequeueAgeMs", "mechTxInFlightAgeMs", "mechTxLastDurationMs", "mechFeedbackAgeMs",
+  "uart1RxByteAgeMs",
+]);
+
+const UINT8_SENTINEL_FIELDS = new Set<string>([
+  "remoteMode", "activeMode", "audioLastReason", "activeRemoteModeLive", "lastFrameType",
+  "mechTxLastStatus", "uart1GState", "uart1RxState",
+]);
+
 const FLOAT_FIELDS = new Set([
   "posX", "posY", "yaw", "locaterX", "locaterY", "locaterYaw", "lidarX", "lidarY", "lidarYaw",
   "encoderX", "encoderY", "h30Yaw", "dt35_1", "dt35_2", "targetX", "targetY", "targetYaw",
@@ -47,11 +86,15 @@ const FLOAT_FIELDS = new Set([
   "steerFb1", "steerFb2", "steerFb3", "steerFb4", "steerErr1", "steerErr2", "steerErr3", "steerErr4",
 ]);
 
-function assignFields(frame: ChassisFrame, names: readonly string[], values: readonly string[]): void {
+function assignFields(frame: ChassisFrame, names: readonly string[], values: readonly string[], normalizeSentinels = false): void {
   names.forEach((name, index) => {
     const text = values[index];
     if (text === undefined) return;
-    frame[name] = FLOAT_FIELDS.has(name) ? finite(text, name) : integer(text, name);
+    const value = FLOAT_FIELDS.has(name) ? finite(text, name) : integer(text, name);
+    frame[name] = normalizeSentinels && (
+      (UINT32_SENTINEL_FIELDS.has(name) && value === 0xffffffff) ||
+      (UINT8_SENTINEL_FIELDS.has(name) && value === 0xff)
+    ) ? null : value;
   });
 }
 
@@ -63,6 +106,24 @@ export function parseCdbg(line: string, observedAtMs: number): ParseOutcome<Chas
   let warnings: string[] = [];
 
   try {
+    if (parts[1] === "3") {
+      const version = integer(parts[1]!, "protocol_version");
+      const declared = integer(parts[2]!, "field_count");
+      if (version !== 3) return { kind: "error", code: "unsupported_version", detail: `CDBG version ${version}` };
+      if (declared !== 151) return { kind: "error", code: "unsupported_field_count", detail: `CDBG v3 field_count ${declared}` };
+      if (parts.length < declared) return { kind: "error", code: "incomplete_frame", detail: `CDBG v3 incomplete field count ${parts.length} < ${declared}` };
+      if (parts.length > declared) return { kind: "error", code: "trailing_fields", detail: `CDBG v3 trailing field count ${parts.length} > ${declared}` };
+      const frame: ChassisFrame = { observedAtMs, rawLine, protocolVersion: 3, fieldCount: 151 };
+      assignFields(frame, V2_90_FIELDS, parts.slice(3, 90), true);
+      assignFields(frame, V3_EXTENSION_FIELDS, parts.slice(90), true);
+      return { kind: "frame", frame, protocolVersion: "cdbg-v3", warnings };
+    }
+
+    if (/^\d+$/.test(parts[1] ?? "") && Number(parts[1]) >= 2 && parts.length > 72) {
+      const version = integer(parts[1]!, "protocol_version");
+      if (version !== 2) return { kind: "error", code: "unsupported_version", detail: `CDBG version ${version}` };
+    }
+
     if (parts[1] === "2" && (parts.length > 72 || parts[2] === "90")) {
       const version = integer(parts[1]!, "protocol_version");
       const declared = integer(parts[2]!, "field_count");
@@ -92,7 +153,7 @@ export function parseCdbg(line: string, observedAtMs: number): ParseOutcome<Chas
     return {
       kind: "error",
       code: "field_count",
-      detail: `CDBG field count ${parts.length} != 30/35/72/90`,
+      detail: `CDBG field count ${parts.length} != 30/35/72/90/151`,
     };
   } catch (error) {
     return outcomeError(error);
@@ -106,17 +167,76 @@ function parseEventValue(value: string): unknown {
   return Number.isFinite(number) ? number : trimmed;
 }
 
+function normalizeEventSentinels(eventKind: string, values: unknown[]): unknown[] {
+  const uint32Indices: Readonly<Record<string, readonly number[]>> = {
+    NRF_LINK: [2, 3],
+    NRF_REG: [1, 2, 3, 4],
+    MODE_SYNC: [5],
+    MECH_TX: [6],
+    UART1_ERR: [6],
+  };
+  const uint8Indices: Readonly<Record<string, readonly number[]>> = {
+    MODE_SYNC: [0, 1],
+    MECH_CMD: [1, 2, 3, 4],
+    MECH_TX: [1, 2, 3, 4, 5],
+    MECH_FB: [1, 2, 3, 4],
+  };
+  const u32 = new Set(uint32Indices[eventKind] ?? []);
+  const u8 = new Set(uint8Indices[eventKind] ?? []);
+  return values.map((value, index) => (
+    (u32.has(index) && value === 0xffffffff) || (u8.has(index) && value === 0xff)
+      ? null
+      : value
+  ));
+}
+
 function eventOutcome(clean: string, observedAtMs: number): ParseOutcome<ChassisFrame> {
   const parts = clean.split(",").map((part) => part.trim());
   const isCevt = parts[0] === "CEVT";
-  if (isCevt && parts.length < 4) return { kind: "error", code: "field_count", detail: `CEVT field count ${parts.length} < 4` };
-  const sourceTimeMs = isCevt ? integer(parts[2]!, "ms") : 0;
+  if (parts[0] === "CDBG_BOOT") {
+    if (parts.length !== 5) return { kind: "error", code: "field_count", detail: `CDBG_BOOT field count ${parts.length} != 5` };
+    const version = integer(parts[1]!, "protocol_version");
+    const declared = integer(parts[2]!, "field_count");
+    if (version !== 3) return { kind: "error", code: "unsupported_version", detail: `CDBG_BOOT version ${version}` };
+    if (declared !== 151) return { kind: "error", code: "unsupported_field_count", detail: `CDBG_BOOT field_count ${declared}` };
+    const sourceTimeMs = integer(parts[3]!, "ms");
+    const event: ProtocolEvent = {
+      source: "chassis", eventKind: "CDBG_BOOT", observedAtMs, sourceTimeMs,
+      fields: [version, declared, integer(parts[4]!, "reset_flags")], rawLine: clean,
+    };
+    return { kind: "event", event };
+  }
+  if (!isCevt) return { kind: "error", code: "unsupported_event", detail: `Unsupported chassis event ${parts[0] ?? ""}` };
+  if (parts.length < 4) return { kind: "error", code: "field_count", detail: `CEVT field count ${parts.length} < 4` };
+  const eventKind = parts[1]!;
+  const v3PayloadCounts: Readonly<Record<string, number>> = {
+    NRF_LINK: 7,
+    NRF_REG: 6,
+    MODE_SYNC: 6,
+    MECH_CMD: 6,
+    MECH_TX: 7,
+    MECH_FB: 7,
+    UART1_ERR: 7,
+  };
+  const legacyKinds = new Set(["AUDIO", "MODE_EXEC", "NRF_LOST", "MOTOR_FAULT"]);
+  const payloadCount = v3PayloadCounts[eventKind];
+  if (payloadCount === undefined && !legacyKinds.has(eventKind)) {
+    return { kind: "error", code: "unsupported_event", detail: `Unsupported CEVT kind ${eventKind}` };
+  }
+  if (payloadCount !== undefined && parts.length !== payloadCount + 3) {
+    return {
+      kind: "error",
+      code: "field_count",
+      detail: `CEVT ${eventKind} field count ${parts.length} != ${payloadCount + 3}`,
+    };
+  }
+  const sourceTimeMs = integer(parts[2]!, "ms");
   const event: ProtocolEvent = {
     source: "chassis",
-    eventKind: isCevt ? parts[1]! : parts[0]!,
+    eventKind,
     observedAtMs,
     sourceTimeMs,
-    fields: (isCevt ? parts.slice(3) : parts.slice(1)).map(parseEventValue),
+    fields: normalizeEventSentinels(eventKind, parts.slice(3).map(parseEventValue)),
     rawLine: clean,
   };
   return { kind: "event", event };
@@ -124,7 +244,7 @@ function eventOutcome(clean: string, observedAtMs: number): ParseOutcome<Chassis
 
 export class ChassisProtocolAdapter implements ProtocolAdapter<ChassisFrame> {
   readonly id = "chassis-cdbg";
-  readonly parserVersion = "2.0.0";
+  readonly parserVersion = "3.0.0";
 
   parse(line: string, observedAtMs: number): ParseOutcome<ChassisFrame> {
     const marker = line.search(/CDBG_BOOT,|CDBG,|CEVT,/);

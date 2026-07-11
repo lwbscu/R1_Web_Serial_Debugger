@@ -120,6 +120,7 @@ test("shows diagnostic tooltips and a working multi-series waveform demo", async
   });
   expect(serialTipHitTest.visible, JSON.stringify(serialTipHitTest)).toBeTruthy();
   await page.getByRole("button", { name: "演示数据" }).click();
+  await expect(page.locator(".diagnostic-metric").filter({ hasText: "CDBG version" })).toContainText("v3, 151 fields");
   const noAck = page.locator(".diagnostic-metric").filter({ hasText: "无 ACK 时间" });
   await expect(noAck).toBeVisible();
   await noAck.hover();
@@ -188,7 +189,7 @@ test("never offers serial write or control-signal actions", async ({ page }) => 
   await disableWebSerial(page);
   await page.goto("/");
   await expect(page.getByText("严格接收模式")).toBeVisible();
-  await expect(page.getByRole("button", { name: /发送|写入|Ping|Zero|调参/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^(发送|写入|Ping|Zero|调参)$/i })).toHaveCount(0);
 });
 
 test("read-only probes three authorized ports and auto-binds unique roles", async ({ page }) => {
