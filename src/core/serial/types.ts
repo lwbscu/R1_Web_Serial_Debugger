@@ -21,6 +21,13 @@ export interface SerialPortProvider {
   requestPort(options?: { filters?: readonly { usbVendorId?: number; usbProductId?: number }[] }): Promise<ReadOnlySerialPort>;
 }
 
+/** The browser-wide Web Serial surface. `getPorts()` only returns ports that
+ * the user has already granted to this origin; it never scans arbitrary COM
+ * devices or bypasses the browser permission prompt. */
+export interface AuthorizedSerialPortProvider extends SerialPortProvider {
+  getPorts(): Promise<ReadOnlySerialPort[]>;
+}
+
 export interface PortStats {
   bytesReceived: number;
   linesReceived: number;
@@ -55,6 +62,7 @@ export interface PortSessionOptions<T> {
   provider: SerialPortProvider;
   adapter: { parse(line: string, observedAtMs: number): ParseOutcome<T> };
   baudRate?: number;
+  openTimeoutMs?: number;
   staleAfterMs?: number;
   wrongRoleThreshold?: number;
   now?: () => number;

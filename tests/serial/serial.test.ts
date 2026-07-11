@@ -57,6 +57,17 @@ class ControlledReader implements SerialReaderLike {
 }
 
 describe("PortSession", () => {
+  it("can release a failed or idle selection before another role retries it", () => {
+    const port: ReadOnlySerialPort = { readable: null, async open() {}, async close() {} };
+    const session = new PortSession<RemoteFrame>({
+      role: "remote", provider: { requestPort: async () => port }, adapter: new RemoteProtocolAdapter(),
+    });
+    session.selectPort(port);
+    expect(session.snapshot().selected).toBe(true);
+    session.clearPort();
+    expect(session.snapshot()).toMatchObject({ lifecycle: "idle", selected: false, health: "no-data", error: null });
+  });
+
   it("reads without exposing a writable interface and closes idempotently", async () => {
     const reader = new ControlledReader();
     let opened = false;
@@ -90,10 +101,11 @@ describe("PortSession", () => {
   it("clears an open error and prior session state after a successful retry", async () => {
     const reader = new ControlledReader();
     let attempts = 0;
+    let closes = 0;
     const port: ReadOnlySerialPort = {
       readable: { getReader: () => reader },
       async open() { attempts += 1; if (attempts === 1) throw new Error("busy"); },
-      async close() { /* test double */ },
+      async close() { closes += 1; },
     };
     const session = new PortSession<RemoteFrame>({
       role: "remote", provider: { requestPort: async () => port }, adapter: new RemoteProtocolAdapter(), now: () => 1000,
@@ -101,9 +113,32 @@ describe("PortSession", () => {
     await session.requestPort();
     await expect(session.connect()).rejects.toThrow("busy");
     expect(session.snapshot()).toMatchObject({ lifecycle: "error", health: "no-data", error: "busy" });
+    expect(closes).toBe(0);
     await session.connect();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(session.snapshot()).toMatchObject({ lifecycle: "reading", health: "valid", error: null });
     await session.close();
+    expect(closes).toBe(1);
+  });
+
+  it("times out a hanging open and closes it if success arrives late", async () => {
+    let resolveOpen!: () => void;
+    let closes = 0;
+    const opening = new Promise<void>((resolve) => { resolveOpen = resolve; });
+    const port: ReadOnlySerialPort = {
+      readable: null,
+      open: () => opening,
+      async close() { closes += 1; },
+    };
+    const session = new PortSession<RemoteFrame>({
+      role: "remote", provider: { requestPort: async () => port }, adapter: new RemoteProtocolAdapter(), openTimeoutMs: 5,
+    });
+    session.selectPort(port);
+    await expect(session.connect()).rejects.toThrow("open timeout");
+    expect(session.snapshot()).toMatchObject({ lifecycle: "error", health: "no-data" });
+    expect(closes).toBe(0);
+    resolveOpen();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(closes).toBe(1);
   });
 });

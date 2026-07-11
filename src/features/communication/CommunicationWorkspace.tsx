@@ -5,6 +5,7 @@ import { publishFrame, telemetryHub } from "../../core/telemetry";
 import { ChassisProtocolAdapter, RemoteProtocolAdapter, type ChassisFrame, type RemoteFrame } from "../../protocols";
 import { downloadText } from "../../shared/download";
 import { RecordIcon } from "../../shared/components/Icons";
+import { InfoTip } from "../../shared/components/InfoTip";
 import { SerialConnectionBar } from "../../shared/components/SerialConnectionBar";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoRemoteFrame } from "../demo/demoData";
@@ -106,8 +107,27 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     if (received.outcome.kind === "error") appendEvents([{ observedAtMs: at, kind: "PARSE_ERROR", severity: "warn", detail: `${role}: ${received.outcome.code} — ${received.outcome.detail}` }]);
   };
 
-  const remotePort = usePortSession<RemoteFrame>("remote", remoteAdapter, handle("remote"));
-  const chassisPort = usePortSession<ChassisFrame>("chassis", chassisAdapter, handle("chassis"));
+  const stopDemo = useCallback(() => {
+    if (!demoActive) return;
+    setDemoActive(false);
+    detector.current.reset();
+    setRemote(null); setChassis(null);
+    telemetryHub.releaseSource("remote", "demo");
+    telemetryHub.releaseSource("chassis", "demo");
+  }, [demoActive]);
+
+  const remotePort = usePortSession<RemoteFrame>("remote", remoteAdapter, handle("remote"), () => {
+    stopDemo();
+    detector.current.resetSource("remote");
+    setRemote(null);
+    telemetryHub.releaseSource("remote", "serial");
+  });
+  const chassisPort = usePortSession<ChassisFrame>("chassis", chassisAdapter, handle("chassis"), () => {
+    stopDemo();
+    detector.current.resetSource("chassis");
+    setChassis(null);
+    telemetryHub.releaseSource("chassis", "serial");
+  });
   const remoteWasReading = useRef(false);
   const chassisWasReading = useRef(false);
 
@@ -137,14 +157,6 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     return () => window.clearInterval(timer);
   }, []);
 
-  const stopDemo = useCallback(() => {
-    if (!demoActive) return;
-    setDemoActive(false);
-    detector.current.reset();
-    setRemote(null); setChassis(null);
-    telemetryHub.releaseSource("remote", "demo");
-    telemetryHub.releaseSource("chassis", "demo");
-  }, [demoActive]);
   useEffect(() => { if (!active) stopDemo(); }, [active, stopDemo]);
 
   const context: MetricContext = freshMetricContext({ remote, chassis }, clockNow);
@@ -174,7 +186,7 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   return <main className="workspace communication-workspace" data-testid="communication-workspace">
     <WorkspaceHeader kicker="R1 LINK DIAGNOSTICS" title="双串口通信诊断" description="严格对拍本地 Python 上位机：端口健康与业务诊断分层显示，悬停任一指标可查看阈值、异常判断和排查路径。"
       meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 fields</span><span>stale 1.5 s</span></>}
-      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className={recorder.active ? "danger" : ""} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recorder.active ? "停止并下载" : "开始本地录制"}</button></>} />
+      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className={recorder.active ? "danger" : ""} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recorder.active ? "停止并下载" : "开始本地录制"}</button><InfoTip label="本地录制说明">录制会把完整原始帧、结构化帧和事件分片暂存在本站的浏览器私有存储中；停止后才生成下载包。暂停滚动和清空界面都不会停止正在进行的录制。</InfoTip></>} />
 
     {!remotePort.supported && <div className="unsupported">实时串口需要桌面版 Chrome/Edge 和 HTTPS。当前仍可使用演示数据查看完整诊断界面。</div>}
 
@@ -203,7 +215,8 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
           <button role="tab" aria-selected={activeTab === "frames"} className={activeTab === "frames" ? "active" : ""} onClick={() => setActiveTab("frames")}>结构化帧 <small>{shownFrames.length}</small></button>
           <button role="tab" aria-selected={activeTab === "events"} className={activeTab === "events" ? "active" : ""} onClick={() => setActiveTab("events")}>事件 <small>{shownEvents.length}</small></button>
         </div>
-        <div className="toolbar"><button className={streamPaused ? "selected" : "secondary"} onClick={toggleConsolePause}>{streamPaused ? "继续滚动" : "暂停滚动"}</button><button className="secondary" onClick={() => { frozenConsole.current = null; setStreamPaused(false); setLogs([]); setFrames([]); setEvents([]); }}>清空界面</button><button className="secondary" onClick={() => exportReport("md")}>导出 MD</button><button className="secondary" onClick={() => exportReport("html")}>导出 HTML</button></div>
+        <InfoTip label="通信事件说明">事件包含网页诊断事件与固件上报事件。常见项：X_ENTER/X_EXIT 表示链路进入或退出 X 状态，ACK_TIMEOUT 表示 ACK 长时间未恢复，CHASSIS_FAST_SCAN 表示底盘快速扫频，RF_CH_CHANGE 表示遥控器信道变化，CHANNEL_MISMATCH 表示双端信道不一致，PARSE_ERROR 表示收到但未通过协议解析。warn/error 应结合时间邻近的原始帧和指标排查。</InfoTip>
+        <div className="toolbar"><button className={streamPaused ? "selected" : "secondary"} onClick={toggleConsolePause}>{streamPaused ? "继续滚动" : "暂停滚动"}</button><button className="secondary" onClick={() => { frozenConsole.current = null; setStreamPaused(false); setLogs([]); setFrames([]); setEvents([]); }}>清空界面</button><button className="secondary" onClick={() => exportReport("md")}>导出 MD</button><button className="secondary" onClick={() => exportReport("html")}>导出 HTML</button><InfoTip label="暂停、清空与报告说明">暂停只冻结当前控制台快照，串口接收、指标更新和本地录制继续运行；清空只删除页面内存中的日志、帧和事件。MD/HTML 报告导出的是当前诊断指标与事件摘要，不等同于包含完整原始数据的录制包。</InfoTip></div>
       </div>
 
       {activeTab === "raw" && <div className="console-table raw-console" role="tabpanel">{shownLogs.length === 0 ? <p className="empty">选择串口或启用演示数据后，完整原始帧会显示在这里。</p> : shownLogs.slice(-500).map((entry, index) => <div className="raw-row" key={`${entry.at}-${index}`}><time>{displayTime(entry.at)}</time><b data-role={entry.role}>{entry.role}</b><em>{entry.result}</em><code title={entry.line}>{entry.line}</code></div>)}</div>}

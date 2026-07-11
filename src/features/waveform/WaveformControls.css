@@ -1,0 +1,73 @@
+.waveform-workspace .scope-zoom-controls {
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(48, 214, 168, 0.045), transparent 35%, rgba(68, 157, 255, 0.035)),
+    rgba(10, 20, 28, 0.86);
+}
+
+.waveform-workspace .scope-zoom-controls::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+  background: linear-gradient(180deg, var(--accent), #408cff);
+  content: "";
+}
+
+.waveform-workspace .scope-zoom-controls label:focus-within strong {
+  color: #d9fff3;
+}
+
+.waveform-workspace .scope-zoom-controls input[type="range"] {
+  height: 20px;
+  background: transparent;
+}
+
+.waveform-workspace .scope-zoom-controls input[type="range"]:focus-visible {
+  outline: 2px solid rgba(65, 219, 168, 0.72);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+
+.waveform-workspace .channel-list > label > span > span {
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.waveform-workspace .channel-list > label > span > span > em {
+  overflow: hidden;
+  color: #526b7b;
+  font-size: 7px;
+  font-style: normal;
+  text-overflow: ellipsis;
+}
+
+.waveform-workspace .channel-list > label > span > small {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.waveform-workspace .wave-series-tooltip {
+  backdrop-filter: blur(8px);
+}
+
+.waveform-workspace .wave-series-tooltip dl div {
+  grid-template-columns: 48px minmax(0, 1fr);
+}
+
+.waveform-workspace .scope-cursor-readout span[title] {
+  padding: 3px 5px;
+  border-radius: 4px;
+  cursor: help;
+}
+
+.waveform-workspace .scope-cursor-readout span[title]:hover {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+@media (max-width: 680px) {
+  .waveform-workspace .scope-zoom-controls label {
+    grid-template-columns: 1fr;
+  }
+}

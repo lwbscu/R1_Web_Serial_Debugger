@@ -95,16 +95,19 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .two-column .panel { margin: 0 0 16px; }
 
 .serial-connection { position: relative; display: grid; grid-template-columns: minmax(180px, 1.1fr) minmax(210px, 1fr) 150px auto; gap: 13px; align-items: center; margin-bottom: 13px; padding: 14px 15px; border: 1px solid var(--border); border-radius: 11px; background: linear-gradient(120deg, #0d1822, #0b141c); }
+.serial-connection:hover, .serial-connection:focus-within { z-index: 90; }
 .serial-connection::before { content: ""; position: absolute; inset: -1px auto -1px -1px; width: 3px; border-radius: 11px 0 0 11px; background: var(--unknown); }
 .serial-connection[data-health="valid"]::before { background: var(--ok); box-shadow: 0 0 14px rgba(50, 213, 131, .34); }
 .serial-connection[data-health="bytes-only"]::before, .serial-connection[data-health="stale"]::before { background: var(--warn); }
 .serial-connection[data-health="wrong-role"]::before { background: var(--error); }
 .serial-identity { display: flex; align-items: center; gap: 11px; }
 .serial-identity > div, .serial-device, .serial-health { display: grid; gap: 3px; min-width: 0; }
-.serial-identity strong { font-size: 14px; }
-.serial-identity span, .serial-device span, .serial-health span { overflow: hidden; color: #7890a3; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.serial-device small { color: #557083; font: 9px ui-monospace, Consolas, monospace; }
-.serial-health strong { color: #bfd0dc; font-size: 12px; }
+.serial-identity > div > strong { font-size: 14px; }
+.serial-identity > div > span, .serial-health > span { overflow: hidden; color: #7890a3; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.serial-device-line { display: flex; gap: 5px; align-items: center; min-width: 0; color: #7890a3; font-size: 10px; }
+.serial-device-line > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.serial-device > small { color: #557083; font: 9px ui-monospace, Consolas, monospace; }
+.serial-health > strong { color: #bfd0dc; font-size: 12px; }
 .status-orb, .status-dot { display: inline-block; flex: 0 0 auto; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: var(--unknown); box-shadow: 0 0 0 4px rgba(145, 164, 183, .08); }
 .status-orb.valid, .status-dot.valid { background: var(--ok); box-shadow: 0 0 0 4px rgba(50, 213, 131, .08), 0 0 12px rgba(50, 213, 131, .35); }
 .status-orb.stale, .status-orb.bytes-only, .status-dot.stale, .status-dot.bytes-only { background: var(--warn); }
@@ -262,10 +265,10 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .map-stage-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; min-height: 42px; padding: 8px 12px; border-bottom: 1px solid #263a49; background: #0a131b; }
 .map-stage-head > span { color: #657d8f; font: 9px ui-monospace, monospace; }
 .map-series-legend { display: flex; flex-wrap: wrap; gap: 11px; font: 9px ui-monospace, monospace; }
-.map-series-legend span::before { content: ""; display: inline-block; width: 13px; height: 2px; margin-right: 5px; vertical-align: middle; background: currentColor; }
-.map-series-legend .dt-state { color: #ffcc33; }
-.map-series-legend .dt-state::before { height: 3px; background: linear-gradient(90deg, #00ffaa 0 20%, #ffcc33 20% 40%, #ff9955 40% 60%, #ff4d4d 60% 80%, #b08cff 80%); }
-.map-series-legend .dt-expected { color: #4aa3ff; }
+.map-series-legend > span::before { content: ""; display: inline-block; width: 13px; height: 2px; margin-right: 5px; vertical-align: middle; background: currentColor; }
+.map-series-legend > .dt-state { color: #ffcc33; }
+.map-series-legend > .dt-state::before { height: 3px; background: linear-gradient(90deg, #00ffaa 0 20%, #ffcc33 20% 40%, #ff9955 40% 60%, #ff4d4d 60% 80%, #b08cff 80%); }
+.map-series-legend > .dt-expected { color: #4aa3ff; }
 .map-stage .field-map { min-height: 0 !important; flex: 1; }
 .map-stage .field-canvas { width: 100%; height: 100%; min-height: clamp(535px, calc(100vh - 395px), 735px); }
 .map-layer-controls { border-radius: 8px !important; backdrop-filter: blur(10px); }
@@ -302,6 +305,13 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .scope-control-group > span { color: #60798c; font-size: 8px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .scope-control-group > div { display: flex; flex-wrap: wrap; gap: 4px; }
 .scope-controlbar button, .preset-strip button { padding: 6px 9px; font-size: 9px; }
+.scope-zoom-controls { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(230px, 1fr) auto; gap: 12px; align-items: center; margin: -2px 0 10px; padding: 10px 13px; border: 1px solid #203442; border-radius: 9px; background: rgba(10, 20, 28, .82); }
+.scope-zoom-controls label { display: grid; grid-template-columns: 145px minmax(120px, 1fr); gap: 10px; align-items: center; min-width: 0; }
+.scope-zoom-controls label > span { display: grid; gap: 2px; }
+.scope-zoom-controls label strong { color: #a9bdca; font-size: 10px; }
+.scope-zoom-controls label small { overflow: hidden; color: #60798b; font: 8px ui-monospace, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.scope-zoom-controls input[type="range"] { width: 100%; min-width: 100px; padding: 0; accent-color: var(--accent); cursor: ew-resize; }
+.scope-zoom-controls button { padding: 7px 10px; font-size: 9px; white-space: nowrap; }
 .fixed-range { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; padding: 9px 13px; color: #8da4b5; border: 1px solid #654e25; border-radius: 8px; background: rgba(92, 68, 24, .2); font-size: 10px; }
 .fixed-range label { display: flex; gap: 7px; align-items: center; }
 .fixed-range input { width: 110px; padding: 5px 7px; }
@@ -344,6 +354,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .scope-empty { display: grid; place-items: center; min-height: 545px; color: #6e8798; text-align: center; }
 .scope-empty strong { color: #a8bbc8; }
 .scope-empty p { max-width: 440px; margin: -200px auto 0; font-size: 11px; line-height: 1.6; }
+.uplot-waveform { position: relative; }
 .uplot-host { width: 100%; min-height: 500px; }
 .uplot-waveform .u-wrap { margin: auto; }
 .uplot-waveform .u-legend { color: #9fb2c1; font: 9px ui-monospace, Consolas, monospace; }
@@ -355,6 +366,13 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .scope-cursor-readout span { display: inline-flex; gap: 5px; align-items: center; font: 9px ui-monospace, monospace; }
 .scope-cursor-readout i { width: 6px; height: 6px; border-radius: 50%; }
 .scope-cursor-readout b { margin-left: 2px; color: #d8e4ec; font-weight: 700; }
+.wave-series-tooltip { position: absolute; z-index: 15; width: 280px; max-width: calc(100% - 16px); padding: 10px 12px; color: #afc1cd; border: 1px solid #355165; border-radius: 7px; background: rgba(5, 12, 18, .96); box-shadow: 0 12px 35px rgba(0, 0, 0, .4); pointer-events: none; font-size: 10px; line-height: 1.5; }
+.wave-series-tooltip > strong { display: block; margin-bottom: 4px; font: 750 11px ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+.wave-series-tooltip p { margin: 0 0 7px; color: #9fb3c0; }
+.wave-series-tooltip dl { display: grid; gap: 3px; margin: 0; padding-top: 6px; border-top: 1px solid #263b49; }
+.wave-series-tooltip dl div { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; }
+.wave-series-tooltip dt { color: #5f7a8d; }
+.wave-series-tooltip dd { margin: 0; color: #d2e0e8; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 @media (max-width: 1500px) {
@@ -393,6 +411,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
   .scope-sidebar { min-height: 0; }
   .channel-list { height: 310px; }
   .scope-controlbar { align-items: stretch; flex-direction: column; }
+  .scope-zoom-controls { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 680px) {
@@ -427,6 +446,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
   .map-layer-controls { max-height: 270px; overflow: auto; }
   .scope-stage-head { align-items: flex-start; flex-direction: column; }
   .scope-stage-head dl { width: 100%; justify-content: space-between; }
+  .scope-zoom-controls label { grid-template-columns: 120px minmax(0, 1fr); }
   .fixed-range { align-items: flex-start; flex-direction: column; }
   .uplot-host { min-height: 430px; overflow-x: auto; }
 }

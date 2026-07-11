@@ -20,7 +20,7 @@ const EMPTY_STATS = (): PortStats => ({
 
 export class PortSession<T> {
   private readonly role: SourceRole;
-  private readonly options: Required<Pick<PortSessionOptions<T>, "baudRate" | "staleAfterMs" | "wrongRoleThreshold">> & PortSessionOptions<T>;
+  private readonly options: Required<Pick<PortSessionOptions<T>, "baudRate" | "openTimeoutMs" | "staleAfterMs" | "wrongRoleThreshold">> & PortSessionOptions<T>;
   private port: ReadOnlySerialPort | null = null;
   private reader: SerialReaderLike | null = null;
   private readTask: Promise<void> | null = null;
@@ -39,6 +39,7 @@ export class PortSession<T> {
     this.options = {
       ...options,
       baudRate: options.baudRate ?? 115200,
+      openTimeoutMs: options.openTimeoutMs ?? 5000,
       staleAfterMs: options.staleAfterMs ?? 1500,
       wrongRoleThreshold: options.wrongRoleThreshold ?? 3,
     };
@@ -67,6 +68,14 @@ export class PortSession<T> {
     this.setLifecycle("idle");
   }
 
+  clearPort(): void {
+    if (this.lifecycle !== "idle" && this.lifecycle !== "error") throw new Error("cannot clear an active port");
+    this.port = null;
+    this.error = null;
+    this.clearDataState();
+    this.setLifecycle("idle");
+  }
+
   async connect(): Promise<void> {
     if (!this.port) throw new Error("no serial port selected");
     if (this.lifecycle === "reading" || this.lifecycle === "opening") return;
@@ -74,14 +83,33 @@ export class PortSession<T> {
     this.error = null;
     this.clearDataState();
     this.setLifecycle("opening");
+    const targetPort = this.port;
+    let openSettled = false;
+    let openedBySession = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const openPromise = Promise.resolve().then(() => targetPort.open({ baudRate: this.options.baudRate })).then(
+      () => { openSettled = true; openedBySession = true; },
+      (error) => { openSettled = true; throw error; },
+    );
     try {
-      await this.port.open({ baudRate: this.options.baudRate });
-      if (!this.port.readable) throw new Error("serial port opened without a readable stream");
-      this.reader = this.port.readable.getReader();
+      await Promise.race([
+        openPromise,
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error(`serial port open timeout after ${this.options.openTimeoutMs} ms`)), this.options.openTimeoutMs);
+        }),
+      ]);
+      if (timeout !== null) clearTimeout(timeout);
+      if (!targetPort.readable) throw new Error("serial port opened without a readable stream");
+      this.reader = targetPort.readable.getReader();
       this.setLifecycle("reading");
       this.readTask = this.readLoop(this.reader);
     } catch (error) {
-      try { await this.port.close(); } catch { /* best-effort cleanup after a partial open */ }
+      if (timeout !== null) clearTimeout(timeout);
+      if (openedBySession) {
+        try { await targetPort.close(); } catch { /* best-effort cleanup after a partial open */ }
+      } else if (!openSettled) {
+        void openPromise.then(() => targetPort.close()).catch(() => undefined);
+      }
       this.fail(error);
       throw error;
     }

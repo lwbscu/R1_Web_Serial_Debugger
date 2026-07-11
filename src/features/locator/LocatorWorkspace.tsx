@@ -6,6 +6,7 @@ import { publishFrame, telemetryHub } from "../../core/telemetry";
 import { LocatorProtocolAdapter, type LocatorFrame } from "../../protocols";
 import { downloadText } from "../../shared/download";
 import { RecordIcon } from "../../shared/components/Icons";
+import { InfoTip } from "../../shared/components/InfoTip";
 import { SerialConnectionBar } from "../../shared/components/SerialConnectionBar";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { numberText } from "../../shared/format";
@@ -72,7 +73,26 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
     }
   }, [consumeFrame, recorder]);
 
-  const port = usePortSession<LocatorFrame>("locator", adapter, onSerial);
+  const stopDemo = useCallback(() => {
+    if (!demoActive) return;
+    setDemoActive(false);
+    if (telemetryHub.activeOrigin("locator") === "demo") {
+      telemetryHub.releaseSource("locator", "demo");
+      setFrame(null); setTrails(EMPTY_TRAILS);
+    }
+  }, [demoActive]);
+  const stopReplay = useCallback(() => {
+    clockRef.current?.stop();
+    if (clockRef.current) setReplay(clockRef.current.snapshot);
+    telemetryHub.releaseSource("locator", "replay");
+  }, []);
+
+  const port = usePortSession<LocatorFrame>("locator", adapter, onSerial, () => {
+    stopDemo();
+    stopReplay();
+    setFrame(null);
+    setTrails(EMPTY_TRAILS);
+  });
   const wasReading = useRef(false);
   useEffect(() => {
     if (wasReading.current && port.snapshot.lifecycle !== "reading") { setFrame(null); telemetryHub.releaseSource("locator", "serial"); }
@@ -87,19 +107,6 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
     return () => window.clearInterval(timer);
   }, [consumeFrame, demoActive]);
 
-  const stopDemo = useCallback(() => {
-    if (!demoActive) return;
-    setDemoActive(false);
-    if (telemetryHub.activeOrigin("locator") === "demo") {
-      telemetryHub.releaseSource("locator", "demo");
-      setFrame(null); setTrails(EMPTY_TRAILS);
-    }
-  }, [demoActive]);
-  const stopReplay = useCallback(() => {
-    clockRef.current?.stop();
-    if (clockRef.current) setReplay(clockRef.current.snapshot);
-    telemetryHub.releaseSource("locator", "replay");
-  }, []);
   useEffect(() => {
     if (active) return;
     stopDemo();
@@ -172,7 +179,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
     <div className="locator-studio">
       <aside className="locator-side locator-replay-panel">
         <section className="studio-card">
-          <header><span>REPLAY</span><strong>日志回放</strong></header>
+          <header><span>REPLAY</span><strong>日志回放</strong><InfoTip label="定位日志回放说明">支持 raw log、CSV 和本站导出的 ZIP 会话包。播放按日志时间推进，单步只前进一帧，0.25× 至 5× 调整回放时间倍率。实时串口连接期间禁用回放，拖动进度会立即重建当前位置。</InfoTip></header>
           <label className={`file-drop${serialBusy ? " disabled" : ""}`}>选择 raw log / CSV / ZIP<input type="file" accept=".log,.txt,.csv,.zip" disabled={serialBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void openReplay(file); }} /></label>
           <p className="file-name" title={replayName}>{replayName || "尚未加载文件"}</p>
           <div className="replay-primary"><button onClick={playReplay} disabled={replay.length === 0 || serialBusy}>播放</button><button className="secondary" onClick={() => clockRef.current?.pause()} disabled={replay.state !== "playing"}>暂停</button><button className="secondary" onClick={() => { stopDemo(); clockRef.current?.step(); }} disabled={replay.length === 0 || serialBusy}>单步</button></div>
@@ -183,7 +190,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
         </section>
 
         <section className="studio-card">
-          <header><span>DISPLAY</span><strong>视图与数据</strong></header>
+          <header><span>DISPLAY</span><strong>视图与数据</strong><InfoTip label="定位视图操作说明">清除三轨迹会清空 Final、Calib、LiDAR 的页面轨迹和当前帧，不删除录制文件。状态 JSON 只导出当前帧、鼠标世界坐标和回放状态；地图画布按钮另行导出当前可见图像。</InfoTip></header>
           <button className="secondary wide" onClick={resetViewData}>清除三轨迹</button>
           <button className="secondary wide" onClick={exportSnapshot}>导出当前状态 JSON</button>
           <p className="studio-hint">地图右上角控制七类图层与跟随。滚轮以鼠标为中心缩放，拖拽平移；跟随开启时每帧自动回中。</p>
@@ -191,19 +198,19 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
       </aside>
 
       <section className="map-stage">
-        <div className="map-stage-head"><div className="map-series-legend"><span className="final">Final</span><span className="calib">Calib</span><span className="lidar">LiDAR</span><span className="dt-state">DT35 状态色</span><span className="dt-expected">DT35 期望</span></div><span>{mouse ? `X ${mouse.x.toFixed(1)} · Y ${mouse.y.toFixed(1)} cm` : "移动鼠标读取世界坐标"}</span></div>
+        <div className="map-stage-head"><div className="map-series-legend"><span className="final">Final</span><span className="calib">Calib</span><span className="lidar">LiDAR</span><span className="dt-state">DT35 状态色</span><span className="dt-expected">DT35 期望</span><InfoTip label="地图图例与坐标说明">Final 是融合后定位，Calib 是标定/校正轨迹，LiDAR 是激光定位轨迹。场地中心为原点，单位 cm，+Y 指向场地前方；YAW 单位为度。DT35 实线按有效状态着色，期望线表示依据场地几何计算的最近命中距离，二者差值用于观察残差。</InfoTip></div><span>{mouse ? `X ${mouse.x.toFixed(1)} · Y ${mouse.y.toFixed(1)} cm` : "移动鼠标读取世界坐标"}</span></div>
         <FieldMap frame={frame} trails={trails} onMousePositionChange={setMouse} />
       </section>
 
       <aside className="locator-side locator-inspector">
         <section className="studio-card pose-card">
-          <header><span>POSE</span><strong>当前定位</strong></header>
+          <header><span>POSE</span><strong>当前定位</strong><InfoTip label="定位姿态字段说明">X/Y/YAW 是协议给出的 Final 融合位姿。Calib 为标定修正坐标，LiDAR 为激光定位坐标，Encoder 为码盘里程计坐标，H30 yaw 为独立航向角。不同来源并列用于判断漂移与融合偏差，不应视为同一测量值。</InfoTip></header>
           <div className="pose-primary"><div><span>X</span><strong>{numberText(frame?.posXcm, 2)}</strong><small>cm</small></div><div><span>Y</span><strong>{numberText(frame?.posYcm, 2)}</strong><small>cm</small></div><div><span>YAW</span><strong>{numberText(frame?.posYawDeg, 2)}</strong><small>deg</small></div></div>
           <dl className="pose-details"><div><dt>协议</dt><dd>{frame?.protocol ?? "—"}</dd></div><div><dt>序号</dt><dd>{frame?.seq ?? "—"}</dd></div><div><dt>Calib</dt><dd>{numberText(frame?.calibXcm, 1)}, {numberText(frame?.calibYcm, 1)}</dd></div><div><dt>LiDAR</dt><dd>{numberText(frame?.lidarXcm, 1)}, {numberText(frame?.lidarYcm, 1)}</dd></div><div><dt>Encoder</dt><dd>{numberText(frame?.encoderXcm, 1)}, {numberText(frame?.encoderYcm, 1)}</dd></div><div><dt>H30 yaw</dt><dd>{numberText(frame?.h30YawDeg, 2)}°</dd></div></dl>
         </section>
 
         <section className="studio-card">
-          <header><span>HEALTH</span><strong>传感器状态</strong></header>
+          <header><span>HEALTH</span><strong>传感器状态</strong><InfoTip label="定位传感器健康说明">H30 有效和 LiDAR 在线来自协议状态位；DT35 显示原始毫米测距及各自有效位，异常值可能来自遮挡、超量程或安装方向；Encoder-1/2 表示本帧是否观察到对应脉冲。状态位有效不代表融合结果一定准确，需结合三轨迹和 DT35 残差判断。</InfoTip></header>
           <div className="sensor-grid">
             <div className={sensorClass(frame?.h30Valid)}><i />H30<strong>{frame?.h30Valid ? "有效" : "无效"}</strong></div>
             <div className={sensorClass(frame?.lidarOnline)}><i />LiDAR<strong>{frame?.lidarOnline ? "在线" : "离线"}</strong></div>
@@ -215,7 +222,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
         </section>
 
         <section className="studio-card raw-preview">
-          <header><span>RAW</span><strong>定位原始日志</strong><small>{visibleLogs.length}/2000{rawPaused ? ` · 后台 ${logs.length}` : ""}</small></header>
+          <header><span>RAW</span><strong>定位原始日志</strong><InfoTip label="定位原始日志说明">窗口最多保留 2000 行并只展示最后 80 行。暂停滚动只冻结可见快照，后台串口解析与录制继续；清空只清理页面日志。“保存”下载当前可见日志，不等同于停止录制后生成的完整会话包。</InfoTip><small>{visibleLogs.length}/2000{rawPaused ? ` · 后台 ${logs.length}` : ""}</small></header>
           <div className="raw-actions"><button className={rawPaused ? "selected" : "secondary"} onClick={toggleRawPause}>{rawPaused ? "继续滚动" : "暂停滚动"}</button><button className="secondary" onClick={() => { frozenLogs.current = null; setRawPaused(false); setLogs([]); }}>清空</button><button className="secondary" onClick={() => downloadText(`locator-visible-${Date.now()}.log`, visibleLogs.join("\n"))}>保存</button></div>
           <pre>{visibleLogs.length ? visibleLogs.slice(-80).join("\n") : "等待串口或演示数据…"}</pre>
         </section>

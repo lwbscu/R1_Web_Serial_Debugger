@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CommunicationWorkspace } from "../features/communication/CommunicationWorkspace";
 import { LocatorWorkspace } from "../features/locator/LocatorWorkspace";
+import { AutoSerialDiscovery } from "../features/serial/AutoSerialDiscovery";
 import { WaveformWorkspace } from "../features/waveform/WaveformWorkspace";
 import { BUILD_INFO } from "../shared/buildInfo";
 import { LinkIcon, MapIcon, ShieldIcon, WaveIcon } from "../shared/components/Icons";
@@ -46,10 +47,12 @@ export function App() {
         </button>)}
       </nav>
 
+      <AutoSerialDiscovery />
+
       <div className="sidebar-spacer" />
       <section className="trust-card">
         <ShieldIcon />
-        <div><strong>严格接收模式</strong><p>不创建 writer，不发送控制命令，不改变 DTR/RTS，串口数据只保留在本机。</p></div>
+        <div><strong>严格接收模式</strong><p>不创建 writer、不发送字节、不主动调用 setSignals；打开端口时线路行为仍由具体驱动决定。</p></div>
       </section>
       <footer>
         <div><span>BUILD</span><strong>{BUILD_INFO.commit.slice(0, 8)}</strong></div>

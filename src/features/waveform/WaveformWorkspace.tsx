@@ -3,7 +3,14 @@ import { publishFrame, telemetryHub, type SeriesId, type TelemetrySource, type T
 import { UPlotWaveform } from "../../shared/components/UPlotWaveform";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoLocatorFrame, demoRemoteFrame } from "../demo/demoData";
-import type { PlotSeriesInput } from "./data";
+import {
+  centeredZoomLevelToRatio,
+  describeSeries,
+  zoomedXSpanSeconds,
+  zoomLevelToRatio,
+  type PlotSeriesInput,
+} from "./data";
+import "./WaveformControls.css";
 
 const WINDOWS: ReadonlyArray<readonly [WaveWindowSeconds, string]> = [[10, "10 秒"], [30, "30 秒"], [60, "1 分钟"], [300, "5 分钟"], [600, "10 分钟"], [1800, "30 分钟"]];
 const SOURCES: ReadonlyArray<{ id: TelemetrySource; label: string; detail: string }> = [
@@ -19,6 +26,19 @@ const PRESETS: ReadonlyArray<{ label: string; fields: SeriesId[] }> = [
   { label: "DT35", fields: ["locator:dt35_1mm", "locator:dt35_2mm"] },
   { label: "驱动反馈", fields: ["chassis:drvCmd1", "chassis:drvFb1", "chassis:drvCmd2", "chassis:drvFb2"] },
 ];
+
+function formatTimeSpan(seconds: number): string {
+  if (seconds < .001) return `${Number((seconds * 1_000_000).toPrecision(4))} μs`;
+  if (seconds < 1) return `${Number((seconds * 1000).toPrecision(4))} ms`;
+  if (seconds < 60) return `${Number(seconds.toPrecision(4))} s`;
+  return `${Number((seconds / 60).toPrecision(4))} min`;
+}
+
+function formatZoomRatio(ratio: number): string {
+  if (Math.abs(ratio - 1) < 1e-9) return "基础量程";
+  if (ratio > 1) return `放大 ${Number(ratio.toPrecision(4))}×`;
+  return `缩小 ${Number((1 / ratio).toPrecision(4))}×`;
+}
 
 function useWaveformRevision(enabled: boolean, maxFps = 30): number {
   const [revision, setRevision] = useState(telemetryHub.revision);
@@ -50,6 +70,8 @@ export function WaveformWorkspace({ active = true }: { active?: boolean }) {
   const [yMode, setYMode] = useState<"auto" | "fixed">("auto");
   const [yMin, setYMin] = useState("0");
   const [yMax, setYMax] = useState("100");
+  const [xZoomLevel, setXZoomLevel] = useState(0);
+  const [yZoomLevel, setYZoomLevel] = useState(0);
   const [search, setSearch] = useState("");
   const [demoActive, setDemoActive] = useState(false);
   const frozenRef = useRef<TelemetrySnapshot | null>(null);
@@ -75,16 +97,24 @@ export function WaveformWorkspace({ active = true }: { active?: boolean }) {
   const shown = paused ? frozenRef.current ?? live : live;
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const fieldCatalog = telemetryHub.catalog();
-  const catalog = fieldCatalog.filter((field) => sources.has(field.source) && (!normalizedSearch || field.label.toLocaleLowerCase().includes(normalizedSearch)));
+  const catalog = fieldCatalog.filter((field) => {
+    const details = describeSeries(field.id);
+    return sources.has(field.source) && (!normalizedSearch || `${field.label} ${details.description} ${details.sourceLabel} ${details.unit}`.toLocaleLowerCase().includes(normalizedSearch));
+  });
   const descriptors = new Map(fieldCatalog.map((field) => [field.id, field]));
   const plotSeries: PlotSeriesInput[] = selected.flatMap((id) => {
     const descriptor = descriptors.get(id);
     if (!descriptor) return [];
-    return [{ id, label: descriptor.label, color: colors[id] ?? descriptor.color, visible: !hidden.has(id), points: shown.series.get(id) ?? [] }];
+    const details = describeSeries(id);
+    return [{ id, ...details, color: colors[id] ?? descriptor.color, visible: !hidden.has(id), points: shown.series.get(id) ?? [] }];
   });
   const fixedMin = Number(yMin); const fixedMax = Number(yMax);
   const yScale: YScaleMode = yMode === "fixed" && Number.isFinite(fixedMin) && Number.isFinite(fixedMax) && fixedMin < fixedMax
     ? { kind: "fixed", min: fixedMin, max: fixedMax } : { kind: "auto" };
+  const xZoomRatio = zoomLevelToRatio(xZoomLevel, 10);
+  const yZoomRatio = centeredZoomLevelToRatio(yZoomLevel, 4);
+  const throughSeconds = (shown.acquiredThroughMs ?? Date.now()) / 1000;
+  const visibleXSpan = zoomedXSpanSeconds(windowMs, xZoomRatio, throughSeconds);
 
   const toggleField = (id: SeriesId) => {
     setSelected((old) => selectionMode === "single" ? [id] : old.includes(id) ? old.filter((item) => item !== id) : [...old, id]);
@@ -123,16 +153,22 @@ export function WaveformWorkspace({ active = true }: { active?: boolean }) {
       meta={<><span>shared X time axis</span><span>up to 30 min</span><span>hover crosshair</span><span>30 FPS render cap</span></>}
       actions={<><button className={demoActive ? "selected" : "secondary"} onClick={toggleDemo}>{demoActive ? "停止演示" : "演示波形"}</button><button className={paused ? "selected" : "secondary"} onClick={togglePause}>{paused ? "恢复实时" : "暂停显示"}</button><button className="secondary" onClick={() => { telemetryHub.clear(); frozenRef.current = null; }}>清空缓冲</button></>} />
 
-    <section className="scope-controlbar">
-      <div className="scope-control-group"><span>选择模式</span><div><button className={selectionMode === "single" ? "selected" : "secondary"} onClick={() => { setSelectionMode("single"); setSelected((old) => old.slice(-1)); }}>单曲线</button><button className={selectionMode === "multi" ? "selected" : "secondary"} onClick={() => setSelectionMode("multi")}>多曲线</button></div></div>
-      <div className="scope-control-group grow"><span>时间窗口</span><div>{WINDOWS.map(([seconds, label]) => <button key={seconds} className={windowSeconds === seconds ? "selected" : "secondary"} onClick={() => { setWindowSeconds(seconds); setFollowLatest(true); }}>{label}</button>)}</div></div>
-      <div className="scope-control-group"><span>Y 轴</span><div><button className={yMode === "auto" ? "selected" : "secondary"} onClick={() => setYMode("auto")}>自动量程</button><button className={yMode === "fixed" ? "selected" : "secondary"} onClick={() => setYMode("fixed")}>固定范围</button></div></div>
-      <button className={followLatest ? "selected" : "secondary"} onClick={() => setFollowLatest(true)}>跟随最新</button>
+    <section className="scope-controlbar" title="选择波形通道、基础时间窗口和纵轴量程策略。">
+      <div className="scope-control-group"><span>选择模式</span><div><button title="每次只显示一个数据字段。" className={selectionMode === "single" ? "selected" : "secondary"} onClick={() => { setSelectionMode("single"); setSelected((old) => old.slice(-1)); }}>单曲线</button><button title="允许把多个数据字段叠加到同一时间轴。" className={selectionMode === "multi" ? "selected" : "secondary"} onClick={() => setSelectionMode("multi")}>多曲线</button></div></div>
+      <div className="scope-control-group grow"><span>时间窗口</span><div>{WINDOWS.map(([seconds, label]) => <button title={`把横轴基础窗口设置为 ${label}；仍可用下方滑块继续放大到微秒级浮点安全下限。`} key={seconds} className={windowSeconds === seconds ? "selected" : "secondary"} onClick={() => { setWindowSeconds(seconds); setXZoomLevel(0); setFollowLatest(true); }}>{label}</button>)}</div></div>
+      <div className="scope-control-group"><span>Y 轴</span><div><button title="根据当前可见曲线数据自动计算基础纵轴范围。" className={yMode === "auto" ? "selected" : "secondary"} onClick={() => setYMode("auto")}>自动量程</button><button title="以手动输入的最小值和最大值作为基础纵轴范围。" className={yMode === "fixed" ? "selected" : "secondary"} onClick={() => setYMode("fixed")}>固定范围</button></div></div>
+      <button title="让横轴右端持续对齐最新数据。手动框选、滚轮或平移会退出跟随。" className={followLatest ? "selected" : "secondary"} onClick={() => setFollowLatest(true)}>跟随最新</button>
+    </section>
+
+    <section className="scope-zoom-controls" aria-label="坐标轴缩放">
+      <label title="按指数连续缩短可见时间窗；最大端会停在当前时间戳的 IEEE-754 浮点安全下限，不受 10 秒预设限制。"><span><strong>横轴缩放</strong><small>可见时间窗 {formatTimeSpan(visibleXSpan)}</small></span><input aria-label="横轴缩放" aria-valuetext={`可见时间窗 ${formatTimeSpan(visibleXSpan)}`} type="range" min="0" max="100" step="0.1" value={xZoomLevel} onChange={(event) => { setXZoomLevel(Number(event.target.value)); setFollowLatest(true); }} /></label>
+      <label title="围绕当前自动量程或固定量程的中心缩放；向左缩小曲线，向右放大曲线。"><span><strong>纵轴缩放</strong><small>{formatZoomRatio(yZoomRatio)}</small></span><input aria-label="纵轴缩放" aria-valuetext={formatZoomRatio(yZoomRatio)} type="range" min="-100" max="100" step="0.1" value={yZoomLevel} onChange={(event) => setYZoomLevel(Number(event.target.value))} /></label>
+      <button title="恢复当前时间窗口和当前 Y 轴量程，并重新跟随最新数据。" className="secondary" type="button" onClick={() => { setXZoomLevel(0); setYZoomLevel(0); setFollowLatest(true); }}>复位双轴</button>
     </section>
 
     {yMode === "fixed" && <section className="fixed-range"><label>Y 最小值<input type="number" value={yMin} onChange={(event) => setYMin(event.target.value)} /></label><label>Y 最大值<input type="number" value={yMax} onChange={(event) => setYMax(event.target.value)} /></label>{yScale.kind !== "fixed" && <span>固定范围必须满足：有限数值且最小值小于最大值。</span>}</section>}
 
-    <section className="preset-strip"><strong>快速组合</strong>{PRESETS.map((preset) => <button className="secondary" key={preset.label} onClick={() => applyPreset(preset.fields)}>{preset.label}</button>)}</section>
+    <section className="preset-strip" title="一键选择常用的多曲线诊断组合。"><strong>快速组合</strong>{PRESETS.map((preset) => <button title={`显示${preset.label}相关字段。`} className="secondary" key={preset.label} onClick={() => applyPreset(preset.fields)}>{preset.label}</button>)}</section>
 
     <div className="scope-layout">
       <aside className="scope-sidebar panel">
@@ -141,18 +177,19 @@ export function WaveformWorkspace({ active = true }: { active?: boolean }) {
         <input className="channel-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索字段，例如 yaw / ack…" />
         <div className="channel-list">{catalog.length === 0 ? <p className="empty">连接串口、加载回放或启用演示波形后显示字段。</p> : catalog.map((field) => {
           const point = telemetryHub.latest(field.id);
+          const details = describeSeries(field.id);
           return <label key={field.id} className={selected.includes(field.id) ? "selected" : ""}>
-            <input aria-label={`选择 ${field.label}`} type={selectionMode === "single" ? "radio" : "checkbox"} checked={selected.includes(field.id)} onChange={() => toggleField(field.id)} />
+            <input aria-label={`选择 ${details.label}`} type={selectionMode === "single" ? "radio" : "checkbox"} checked={selected.includes(field.id)} onChange={() => toggleField(field.id)} />
             <i style={{ background: colors[field.id] ?? field.color }} />
-            <span title={field.label}>{field.label}<small>{point ? Number(point.value.toPrecision(7)) : "—"}</small></span>
-            <input aria-label={`${field.label} 颜色`} type="color" value={colors[field.id] ?? field.color} onChange={(event) => setColors((old) => ({ ...old, [field.id]: event.target.value }))} />
+            <span title={`${details.description} · 来源：${details.sourceLabel} · 单位：${details.unit} · 字段：${details.fieldPath}`}><span>{details.label}<em>{details.fieldPath}</em></span><small>{point ? Number(point.value.toPrecision(7)) : "—"}</small></span>
+            <input title={`修改“${details.label}”的曲线颜色。`} aria-label={`${details.label} 颜色`} type="color" value={colors[field.id] ?? field.color} onChange={(event) => setColors((old) => ({ ...old, [field.id]: event.target.value }))} />
           </label>;
         })}</div>
       </aside>
 
       <section className="scope-stage panel">
         <header className="scope-stage-head"><div><strong>实时波形</strong><span>{paused ? "显示已冻结，后台仍持续采集" : followLatest ? "跟随最新数据" : "已离开实时窗口"}</span></div><dl><div><dt>缓冲点</dt><dd>{telemetryHub.pointCount().toLocaleString()}</dd></div><div><dt>当前曲线点</dt><dd>{selectedPoints.toLocaleString()}</dd></div><div><dt>曲线</dt><dd>{plotSeries.length}</dd></div></dl></header>
-        {plotSeries.length === 0 ? <div className="scope-empty"><strong>选择一条或多条曲线开始观察</strong><p>可先点击“演示波形”，再使用上方快速组合；真实串口连接后字段会自动进入左侧列表。</p></div> : <UPlotWaveform series={plotSeries} yScale={yScale} followLatest={followLatest} windowMs={windowMs} throughMs={shown.acquiredThroughMs ?? Date.now()} onUserNavigate={() => setFollowLatest(false)} onResetView={() => setFollowLatest(true)} onVisibilityChange={(id, visible) => setHidden((old) => { const next = new Set(old); if (visible) next.delete(id); else next.add(id); return next; })} />}
+        {plotSeries.length === 0 ? <div className="scope-empty"><strong>选择一条或多条曲线开始观察</strong><p>可先点击“演示波形”，再使用上方快速组合；真实串口连接后字段会自动进入左侧列表。</p></div> : <UPlotWaveform series={plotSeries} yScale={yScale} xZoomRatio={xZoomRatio} yZoomRatio={yZoomRatio} followLatest={followLatest} windowMs={windowMs} throughMs={shown.acquiredThroughMs ?? Date.now()} onUserNavigate={() => setFollowLatest(false)} onResetView={() => { setXZoomLevel(0); setYZoomLevel(0); setFollowLatest(true); }} onVisibilityChange={(id, visible) => setHidden((old) => { const next = new Set(old); if (visible) next.delete(id); else next.add(id); return next; })} />}
       </section>
     </div>
   </main>;

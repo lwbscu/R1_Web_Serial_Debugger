@@ -1,0 +1,68 @@
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  vertical-align: middle;
+}
+
+.info-tip-trigger {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid #456274;
+  border-radius: 50%;
+  background: #101f2a;
+  color: #a9c6d8;
+  font: 700 11px/16px Georgia, serif;
+  text-align: center;
+}
+
+.info-tip-trigger:hover,
+.info-tip-trigger:focus-visible,
+.info-tip-pinned .info-tip-trigger {
+  border-color: #56c8e8;
+  color: #e4f8ff;
+  box-shadow: 0 0 0 2px rgba(86, 200, 232, .16);
+}
+
+.info-tip-content {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 8px);
+  right: 0;
+  display: none;
+  width: min(300px, calc(100vw - 32px));
+  padding: 10px 12px;
+  border: 1px solid #355467;
+  border-radius: 8px;
+  background: #09141d;
+  color: #c8d9e4;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .42);
+  font: 11px/1.55 system-ui, sans-serif;
+  letter-spacing: normal;
+  text-align: left;
+  white-space: normal;
+}
+
+.info-tip:hover .info-tip-content,
+.info-tip:focus-within .info-tip-content,
+.info-tip-pinned .info-tip-content {
+  display: block;
+}
+
+.info-tip-content strong {
+  color: #edf8fd;
+}
+
+@media (max-width: 680px) {
+  .info-tip-content {
+    position: fixed;
+    top: auto;
+    right: 16px;
+    bottom: 16px;
+    left: 16px;
+    width: auto;
+  }
+}

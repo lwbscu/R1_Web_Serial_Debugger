@@ -4,8 +4,14 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
 
-/assets/*
+/assets/*.js
   Cache-Control: public, max-age=31536000, immutable
+
+/assets/*.css
+  Cache-Control: public, max-age=31536000, immutable
+
+/assets/map/*
+  Cache-Control: no-cache, must-revalidate
 
 /version.json
   Cache-Control: no-cache, must-revalidate
