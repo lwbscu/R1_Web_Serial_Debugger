@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProtocolEvent } from "../../src/core/types";
 import type { ChassisFrame, RemoteFrame, RemoteTxEvent } from "../../src/protocols";
-import { buildRemoteCommandView } from "../../src/features/remoteControl/model";
+import { buildMechanismLiveView, buildRemoteCommandView } from "../../src/features/remoteControl/model";
 
 const remote = (overrides: Partial<RemoteFrame> = {}): RemoteFrame => ({
   observedAtMs: 1000, rawLine: "RDBG", ms: 1, seq: 1, packetType: "ACT", rfCh: 76,
@@ -50,7 +50,8 @@ describe("remote command view model", () => {
     expect(view.headlineLabel).toBe("当前动作指令");
     expect(view.title).toContain("ACT");
     expect(view.txHex).toContain("5B");
-    expect(view.ackResult).toContain("echo 匹配");
+    expect(view.ackResult).toContain("机构反馈对齐");
+    expect(view.ackResult).toContain("state=2");
     expect(view.args).toEqual([
       { label: "state", value: "2" },
       { label: "stage", value: "1" },
@@ -67,11 +68,33 @@ describe("remote command view model", () => {
     expect(view.steps[0]).toMatchObject({ key: "remote_tx", status: "error" });
   });
 
-  it("warns when ACT ACK echo does not match the transmitted args", () => {
+  it("warns when ACT ACK feedback state/stage does not match the transmitted args", () => {
     const view = buildRemoteCommandView(remote(), chassis(), tx({ ackBytes: [0x87, 0x5C, 9, 1, 1, 1], ackHex: "875C09010101" }), 1500, actEvents());
     expect(view.primaryStatus).toBe("warn");
-    expect(view.ackResult).toContain("echo 不匹配");
+    expect(view.ackResult).toContain("可能是陈旧反馈");
+    expect(view.ackResult).toContain("state=9");
     expect(view.steps.find((step) => step.key === "nrf_ack")).toMatchObject({ status: "warn" });
+  });
+
+  it("treats mechanism feedback exec as returned status, not an ACK echo mismatch", () => {
+    const request = tx({
+      txHex: "5B02010001",
+      txBytes: [0x5B, 2, 1, 0, 1],
+      ackHex: "875C02010301",
+      ackBytes: [0x87, 0x5C, 2, 1, 3, 1],
+      args: [2, 1, 0, 1],
+    });
+    const events: ProtocolEvent[] = [
+      event("MECH_CMD", [1, 2, 1, 0, 1, 1], 1260),
+      event("MECH_CMD", [3, 2, 1, 0, 1, 0], 1280),
+      event("MECH_TX", [2, 2, 1, 0, 1, 0, 3], 1300),
+      event("MECH_FB", [1, 2, 1, 3, 1, 6, 6], 1320),
+    ];
+    const view = buildRemoteCommandView(remote(), chassis(), request, 1500, events);
+    expect(view.primaryStatus).toBe("normal");
+    expect(view.ackResult).toContain("exec=3");
+    expect(view.steps.find((step) => step.key === "nrf_ack")?.detail).toContain("exec=3");
+    expect(view.steps.find((step) => step.key === "mechanism_feedback")?.detail).toContain("exec=3");
   });
 
   it("degrades when the current firmware only provides legacy RDBG", () => {
@@ -85,5 +108,26 @@ describe("remote command view model", () => {
     const view = buildRemoteCommandView(remote(), chassis({ mechFeedbackAgeMs: 5000 }), tx(), 1500);
     expect(view.primaryStatus).toBe("error");
     expect(view.steps.find((step) => step.key === "mechanism_feedback")?.status).toBe("error");
+  });
+
+  it("summarizes live mechanism feedback state and stage even without matching remote TX", () => {
+    const view = buildMechanismLiveView(chassis(), actEvents(), 1500);
+    const feedback = view.cards.find((card) => card.key === "fb");
+    expect(view.primaryStatus).toBe("normal");
+    expect(view.title).toContain("机构反馈");
+    expect(feedback?.title).toContain("机构有效回传");
+    expect(feedback?.args).toEqual([
+      { label: "state", value: "2" },
+      { label: "stage", value: "1" },
+      { label: "exec", value: "1" },
+      { label: "enabled", value: "1" },
+    ]);
+  });
+
+  it("keeps mechanism summary explicit when chassis is not connected", () => {
+    const view = buildMechanismLiveView(null, [], 1500);
+    expect(view.primaryStatus).toBe("unknown");
+    expect(view.notice).toContain("请同时连接底盘 CDBG");
+    expect(view.cards.map((card) => card.key)).toEqual(["cmd", "tx", "fb", "uart"]);
   });
 });

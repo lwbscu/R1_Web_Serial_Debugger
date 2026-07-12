@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ProtocolEvent } from "../../core/types";
 import type { PortSnapshot } from "../../core/serial";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoRemoteFrame, demoRemoteTxEvent } from "../demo/demoData";
 import { requestOpenSerialDiscovery } from "../serial/discoveryDialogStore";
-import { buildRemoteCommandView, formatCommandArgs, formatHexBytes, type RemoteCommandStatus } from "./model";
+import { buildMechanismLiveView, buildRemoteCommandView, formatCommandArgs, formatHexBytes, type MechanismLiveView, type RemoteCommandStatus } from "./model";
 import { remoteDebugStore, type RemoteDebugPortState, useRemoteDebugState } from "./remoteDebugStore";
 
 function statusLabel(status: RemoteCommandStatus): string {
@@ -105,6 +106,63 @@ function packetRowClass(packetType: string, latest: boolean): string {
   return `remote-tx-row ${typeClass}${latest ? " latest" : ""}`;
 }
 
+function demoMechanismEvents(at: number): ProtocolEvent[] {
+  const base = at - 70;
+  return [
+    {
+      source: "chassis",
+      eventKind: "MECH_CMD",
+      observedAtMs: base,
+      sourceTimeMs: base % 0xFFFFFFFF,
+      fields: [1, 2, 1, 1, 1, 1],
+      rawLine: "CEVT,MECH_CMD,DEMO,1,2,1,1,1,1",
+    },
+    {
+      source: "chassis",
+      eventKind: "MECH_TX",
+      observedAtMs: base + 25,
+      sourceTimeMs: (base + 25) % 0xFFFFFFFF,
+      fields: [2, 2, 1, 1, 1, 0, 3],
+      rawLine: "CEVT,MECH_TX,DEMO,2,2,1,1,1,0,3",
+    },
+    {
+      source: "chassis",
+      eventKind: "MECH_FB",
+      observedAtMs: base + 55,
+      sourceTimeMs: (base + 55) % 0xFFFFFFFF,
+      fields: [1, 2, 1, 1, 1, 5, 5],
+      rawLine: "CEVT,MECH_FB,DEMO,1,2,1,1,1,5,5",
+    },
+  ];
+}
+
+function MechanismLivePanel({ view }: { view: MechanismLiveView }) {
+  return <section className={`panel mechanism-live-panel ${view.primaryStatus}`} aria-label="机构反馈实况">
+    <div className="panel-title"><strong>机构反馈实况</strong><small>Chassis CEVT · USART1 · R1_Project_V3</small></div>
+    <div className="mechanism-live-head">
+      <div>
+        <span>MECHANISM FEEDBACK</span>
+        <strong>{view.title}</strong>
+        <p>{view.subtitle}</p>
+      </div>
+      <span className={statusClass(view.primaryStatus)}>{statusLabel(view.primaryStatus)}</span>
+    </div>
+    {view.notice && <p className="remote-notice">{view.notice}</p>}
+    <div className="mechanism-card-grid">
+      {view.cards.map((card) => <article key={card.key} className={`mechanism-card ${card.status}`}>
+        <div className="mechanism-card-title">
+          <span>{card.label}</span>
+          <strong>{card.title}</strong>
+        </div>
+        <p>{card.detail}</p>
+        {card.args.length > 0 && <div className="remote-args compact">
+          {card.args.map((arg) => <div key={arg.label}><span>{arg.label}</span><strong>{arg.value}</strong></div>)}
+        </div>}
+      </article>)}
+    </div>
+  </section>;
+}
+
 export interface RemoteControlWorkspaceProps {
   active?: boolean;
   onOpenCommunication?: () => void;
@@ -120,6 +178,10 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
     () => buildRemoteCommandView(state.latestRemote, state.latestChassis, state.latestTx, nowMs, state.chassisEvents),
     [nowMs, state.chassisEvents, state.latestChassis, state.latestRemote, state.latestTx],
   );
+  const mechanismView = useMemo(
+    () => buildMechanismLiveView(state.latestChassis, state.chassisEvents, nowMs),
+    [nowMs, state.chassisEvents, state.latestChassis],
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 250);
@@ -133,6 +195,7 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
       remoteDebugStore.publishRemote(demoRemoteFrame(at));
       remoteDebugStore.publishChassis(demoChassisFrame(at));
       remoteDebugStore.publishTx(demoRemoteTxEvent(at));
+      for (const event of demoMechanismEvents(at)) remoteDebugStore.publishChassisEvent(event);
     };
     tick();
     const timer = window.setInterval(tick, 250);
@@ -211,6 +274,9 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
             <span>{view.headlineLabel}</span>
             <strong>{view.title}</strong>
             <p>{view.subtitle}</p>
+            {view.args.length > 0 && <div className="remote-hero-fields" aria-label="当前命令解码字段">
+              {view.args.map((arg) => <div key={arg.label}><span>{arg.label}</span><strong>{arg.value}</strong></div>)}
+            </div>}
           </div>
           <dl>
             <div><dt>发送结果</dt><dd>{view.txResult}</dd></div>
@@ -243,6 +309,8 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
             </div>
           </section>
         </div>
+
+        <MechanismLivePanel view={mechanismView} />
 
         <section className="panel remote-live-panel">
           <div className="panel-title"><strong>实时上下文</strong><small>来自通信诊断页的同一批串口数据</small></div>

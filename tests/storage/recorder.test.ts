@@ -137,6 +137,7 @@ describe("session export", () => {
     const first = unzipSync(volumes[0]!.bytes);
     expect(Object.keys(first).sort()).toEqual([
       "chassis_cdbg.csv",
+      "chassis_cevt.csv",
       "chassis_raw.log",
       "events.csv",
       "remote_raw.log",
@@ -247,6 +248,7 @@ describe("session export", () => {
     await recorder.append("remote_raw.log", "100,RDBG,...\n", 1);
     await recorder.append("remote_rdbg_tx.csv", "100,RDBG_TX,...\n", 1);
     await recorder.append("chassis_cdbg.csv", "105,CDBG,3,151,...\n", 2);
+    await recorder.append("chassis_cevt.csv", "106,CEVT,MECH_FB,100,1,2,1,1,1,5,5\n", 2);
     await recorder.append("locator_raw.log", "[0.1] $R1M,...\n", 3);
     await recorder.append("locator_frames.csv", "110,$R1M,...\n", 3);
     await recorder.append("locator_display_frames.csv", "110,0,1,0,0,0\n", 3);
@@ -258,6 +260,7 @@ describe("session export", () => {
     const entries = unzipSync(volume!.bytes);
     expect(Object.keys(entries).sort()).toEqual([
       "chassis_cdbg.csv",
+      "chassis_cevt.csv",
       "chassis_raw.log",
       "connection_status.csv",
       "events.csv",

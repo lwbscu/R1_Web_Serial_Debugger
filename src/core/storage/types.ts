@@ -8,6 +8,7 @@ export type CommunicationArtifact =
   | "remote_rdbg.csv"
   | "remote_rdbg_tx.csv"
   | "chassis_cdbg.csv"
+  | "chassis_cevt.csv"
   | "events.csv"
   | "session.json";
 
@@ -24,6 +25,7 @@ export type GlobalArtifact =
   | "remote_rdbg.csv"
   | "remote_rdbg_tx.csv"
   | "chassis_cdbg.csv"
+  | "chassis_cevt.csv"
   | "locator_raw.log"
   | "locator_frames.csv"
   | "locator_display_frames.csv"
@@ -99,6 +101,7 @@ const COMMUNICATION_ARTIFACTS: readonly CommunicationArtifact[] = [
   "remote_rdbg.csv",
   "remote_rdbg_tx.csv",
   "chassis_cdbg.csv",
+  "chassis_cevt.csv",
   "events.csv",
   "session.json",
 ];
@@ -117,6 +120,7 @@ const GLOBAL_ARTIFACTS: readonly GlobalArtifact[] = [
   "remote_rdbg.csv",
   "remote_rdbg_tx.csv",
   "chassis_cdbg.csv",
+  "chassis_cevt.csv",
   "locator_raw.log",
   "locator_frames.csv",
   "locator_display_frames.csv",
