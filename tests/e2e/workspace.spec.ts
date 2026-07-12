@@ -258,12 +258,12 @@ test("keeps locator values and trail samples start-relative while switching red 
   const mapScale = Math.min((canvasBox.width - 48) / 1215, (canvasBox.height - 48) / 1210);
   await page.mouse.move(
     canvasBox.x + canvasBox.width / 2 - 547.5 * mapScale,
-    canvasBox.y + canvasBox.height / 2 + 239.5 * mapScale,
+    canvasBox.y + canvasBox.height / 2 + 259.5 * mapScale,
   );
   const coordinateStatus = workspace.locator(".map-coordinate-status");
   await expect(coordinateStatus).toContainText("预选赛红方 9gong 起点");
-  await expect(coordinateStatus).toContainText("中心 x=-547.5 cm · y=-239.5 cm");
-  await expect(coordinateStatus).toContainText("距 R1 通道边线 60.0 cm · 距树林下边界 44.5 cm");
+  await expect(coordinateStatus).toContainText("中心 x=-547.5 cm · y=-259.5 cm");
+  await expect(coordinateStatus).toContainText("距 R1 通道边线 60.0 cm · 距树林下边界 64.5 cm");
   await official.click();
   await expect(canvas).toHaveAttribute("data-match-type", "official");
 
