@@ -9,6 +9,7 @@ import {
   type ExportedVolume,
   type ExportSessionProgress,
   type RecordingArtifact,
+  type RecordingProfile,
   type RecordingKind,
   type RecoverableSession,
   type SessionManifest,
@@ -17,9 +18,17 @@ import {
 import { BUILD_INFO } from "../../shared/buildInfo";
 import { sessionId } from "../../shared/format";
 
-const FLUSH_DELAY_MS = 100;
-const FLUSH_MAX_BYTES = 64 * 1024;
-const FLUSH_MAX_RECORDS = 100;
+const FLUSH_DELAY_MS = 500;
+const FLUSH_MAX_BYTES = 512 * 1024;
+const FLUSH_MAX_RECORDS = 5_000;
+const PAINT_TIMEOUT_MS = 250;
+const QUICK_SERIAL_ARTIFACTS = new Set<RecordingArtifact>([
+  "remote_raw.log",
+  "chassis_raw.log",
+  "locator_raw.log",
+  "raw_serial.log",
+  "connection_status.csv",
+]);
 
 export type RecordingDownloadPhase =
   | "queued"
@@ -45,8 +54,10 @@ export type RecorderManifestExtras = Pick<SessionManifest, "locatorCoordinates" 
 export interface RecorderController {
   kind: RecordingKind;
   active: boolean;
+  starting: boolean;
   stopping: boolean;
   exporting: boolean;
+  profile: RecordingProfile;
   exportQueue: string[];
   exportQueuedIds: string[];
   downloadProgress: RecordingDownloadProgress | null;
@@ -56,6 +67,7 @@ export interface RecorderController {
   append(artifact: RecordingArtifact, text: string, at?: number): Promise<void> | undefined;
   stopAndDownload(): Promise<void>;
   downloadRecovered(id: string): Promise<void>;
+  setProfile(profile: RecordingProfile): void;
 }
 
 interface PendingArtifact {
@@ -68,6 +80,10 @@ interface PendingArtifact {
 interface PendingStats {
   count: number;
   bytes: number;
+}
+
+interface FlushOptions {
+  drain?: boolean;
 }
 
 const encoder = new TextEncoder();
@@ -87,6 +103,13 @@ function concatenate(parts: Uint8Array[]): Uint8Array {
     offset += part.byteLength;
   }
   return output;
+}
+
+function addStats(left: PendingStats, right: PendingStats): PendingStats {
+  return {
+    count: left.count + right.count,
+    bytes: left.bytes + right.bytes,
+  };
 }
 
 function progressLabel(progress: ExportSessionProgress): string {
@@ -115,9 +138,21 @@ function exportProgressState(progress: ExportSessionProgress, queueLength: numbe
 }
 
 function waitForPaint(): Promise<void> {
+  let timer = 0;
   if (typeof requestAnimationFrame === "function") {
-    return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    return new Promise((resolve) => {
+      const finish = () => {
+        window.clearTimeout(timer);
+        resolve();
+      };
+      timer = window.setTimeout(finish, PAINT_TIMEOUT_MS);
+      requestAnimationFrame(finish);
+    });
   }
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
@@ -125,16 +160,22 @@ export function useRecorder(kind: RecordingKind): RecorderController {
   const storeRef = useRef<OpfsFileStore | null>(null);
   const recorderRef = useRef<SessionRecorder | null>(null);
   const activeSessionIdRef = useRef<string | null>(null);
+  const profileRef = useRef<RecordingProfile>("quickSerial");
+  const startingRef = useRef(false);
   const stoppingRef = useRef(false);
   const pendingRef = useRef(new Map<RecordingArtifact, PendingArtifact>());
   const pendingTotalsRef = useRef<PendingStats>({ count: 0, bytes: 0 });
   const flushTimerRef = useRef<number | null>(null);
-  const flushInFlightRef = useRef<Promise<void> | null>(null);
+  const flushInFlightRef = useRef<Promise<PendingStats> | null>(null);
+  const flushPendingRef = useRef<((target?: SessionRecorder | null, options?: FlushOptions) => Promise<PendingStats>) | null>(null);
+  const closingSessionIdsRef = useRef(new Set<string>());
   const exportQueueRef = useRef<string[]>([]);
   const runningExportRef = useRef<string | null>(null);
 
   const [active, setActive] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [profile, setProfileState] = useState<RecordingProfile>("quickSerial");
   const [exporting, setExporting] = useState(false);
   const [exportQueue, setExportQueue] = useState<string[]>([]);
   const [downloadProgress, setDownloadProgress] = useState<RecordingDownloadProgress | null>(null);
@@ -143,6 +184,7 @@ export function useRecorder(kind: RecordingKind): RecorderController {
 
   const syncExportState = useCallback(() => {
     const ids = [
+      ...closingSessionIdsRef.current,
       ...(runningExportRef.current ? [runningExportRef.current] : []),
       ...exportQueueRef.current,
     ];
@@ -150,10 +192,17 @@ export function useRecorder(kind: RecordingKind): RecorderController {
     setExportQueue(ids);
   }, []);
 
+  const setProfile = useCallback((next: RecordingProfile) => {
+    if (startingRef.current || stoppingRef.current || activeSessionIdRef.current) return;
+    profileRef.current = next;
+    setProfileState(next);
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       const store = storeRef.current ??= new OpfsFileStore();
       const blocked = new Set([
+        ...closingSessionIdsRef.current,
         ...(runningExportRef.current ? [runningExportRef.current] : []),
         ...exportQueueRef.current,
         ...(activeSessionIdRef.current ? [activeSessionIdRef.current] : []),
@@ -188,31 +237,62 @@ export function useRecorder(kind: RecordingKind): RecorderController {
     return { items, stats };
   }, []);
 
-  const flushPending = useCallback(async (target = recorderRef.current): Promise<PendingStats> => {
+  const armFlushTimer = useCallback((target: SessionRecorder) => {
     clearFlushTimer();
-    if (flushInFlightRef.current) await flushInFlightRef.current;
-    const { items, stats } = takePending();
-    if (!target || items.length === 0) return stats;
-    const flush = target.appendBatch(items);
-    const marker = flush.then(() => undefined, () => undefined);
-    flushInFlightRef.current = marker;
-    try {
-      await flush;
-      return stats;
-    } finally {
-      if (flushInFlightRef.current === marker) flushInFlightRef.current = null;
-    }
-  }, [clearFlushTimer, takePending]);
-
-  const scheduleFlush = useCallback((target: SessionRecorder) => {
-    if (flushTimerRef.current !== null) return;
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null;
-      void flushPending(target).catch((reason: unknown) => {
+      void flushPendingRef.current?.(target).catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : String(reason));
       });
     }, FLUSH_DELAY_MS);
-  }, [flushPending]);
+  }, [clearFlushTimer]);
+
+  const flushOnce = useCallback(async (target: SessionRecorder | null): Promise<PendingStats> => {
+    const { items, stats } = takePending();
+    if (!target || items.length === 0) return stats;
+    await target.appendBatch(items);
+    return stats;
+  }, [takePending]);
+
+  const flushPending = useCallback((target = recorderRef.current, options: FlushOptions = {}): Promise<PendingStats> => {
+    clearFlushTimer();
+    const drain = options.drain ?? false;
+    const running = flushInFlightRef.current;
+    if (running) {
+      if (!drain) return running;
+      return running.then(async (stats) => addStats(stats, await flushPending(target, { drain: true })));
+    }
+
+    const flush = flushOnce(target);
+    flushInFlightRef.current = flush;
+    void flush.then(
+      () => {
+        if (flushInFlightRef.current === flush) flushInFlightRef.current = null;
+        if (
+          !drain &&
+          target !== null &&
+          recorderRef.current === target &&
+          !stoppingRef.current &&
+          pendingTotalsRef.current.count > 0
+        ) {
+          armFlushTimer(target);
+        }
+      },
+      () => {
+        if (flushInFlightRef.current === flush) flushInFlightRef.current = null;
+      },
+    );
+    if (!drain) return flush;
+    return flush.then(async (stats) => {
+      if (pendingTotalsRef.current.count === 0) return stats;
+      return addStats(stats, await flushPending(target, { drain: true }));
+    });
+  }, [armFlushTimer, clearFlushTimer, flushOnce]);
+  flushPendingRef.current = flushPending;
+
+  const scheduleFlush = useCallback((target: SessionRecorder) => {
+    armFlushTimer(target);
+  }, [armFlushTimer]);
 
   const exportVolumes = useCallback((store: OpfsFileStore, id: string, onProgress: (progress: ExportSessionProgress) => void | Promise<void>): AsyncGenerator<ExportedVolume, void, void> => {
     if (typeof Worker === "undefined") {
@@ -313,18 +393,89 @@ export function useRecorder(kind: RecordingKind): RecorderController {
     void processExportQueue();
   }, [processExportQueue, refresh, syncExportState]);
 
+  const closeStoppedSessionInBackground = useCallback((
+    recorder: SessionRecorder,
+    id: string,
+    items: SessionRecorderBatchItem[],
+    stats: PendingStats,
+    previousFlush: Promise<PendingStats> | null,
+  ) => {
+    closingSessionIdsRef.current.add(id);
+    syncExportState();
+    void (async () => {
+      try {
+        setDownloadProgress({
+          phase: "stopping",
+          sessionId: id,
+          current: 1,
+          total: 4,
+          percent: 5,
+          label: "后台落盘旧录制",
+          detail: previousFlush
+            ? `等待已排队写入完成；最后 ${stats.count} 条 / ${formatBytes(stats.bytes)} 已转入后台`
+            : `最后 ${stats.count} 条 / ${formatBytes(stats.bytes)} 已转入后台`,
+        });
+        if (previousFlush) await previousFlush;
+        if (items.length > 0) {
+          for (const [index, item] of items.entries()) {
+            setDownloadProgress({
+              phase: "stopping",
+              sessionId: id,
+              current: 2,
+              total: 4,
+              percent: 10 + Math.round(((index + 1) / items.length) * 15),
+              label: "后台落盘旧录制",
+              detail: `正在写入 ${item.artifact} (${index + 1}/${items.length}) · 最后 ${stats.count} 条 / ${formatBytes(stats.bytes)}`,
+            });
+            await recorder.appendBatch([item]);
+            await yieldToBrowser();
+          }
+        }
+        setDownloadProgress({
+          phase: "stopping",
+          sessionId: id,
+          current: 3,
+          total: 4,
+          percent: 25,
+          label: "后台写入关闭检查点",
+          detail: "录制数据已落盘，正在封存 session",
+        });
+        await recorder.stop();
+        closingSessionIdsRef.current.delete(id);
+        syncExportState();
+        enqueueExport(id);
+        await refresh();
+      } catch (reason) {
+        closingSessionIdsRef.current.delete(id);
+        syncExportState();
+        const message = reason instanceof Error ? reason.message : String(reason);
+        setDownloadProgress({
+          phase: "error",
+          sessionId: id,
+          current: 0,
+          total: 0,
+          percent: 0,
+          label: "后台封存录制失败",
+          detail: message,
+        });
+        setError(message);
+        await refresh();
+      }
+    })();
+  }, [enqueueExport, refresh, syncExportState]);
+
   useEffect(() => { void refresh(); }, [refresh]);
 
   useEffect(() => {
     const flushOnHidden = () => {
       if (document.visibilityState === "hidden") {
-        void flushPending(recorderRef.current).catch((reason: unknown) => {
+        void flushPending(recorderRef.current, { drain: true }).catch((reason: unknown) => {
           setError(reason instanceof Error ? reason.message : String(reason));
         });
       }
     };
     const flushOnPageHide = () => {
-      void flushPending(recorderRef.current).catch((reason: unknown) => {
+      void flushPending(recorderRef.current, { drain: true }).catch((reason: unknown) => {
         setError(reason instanceof Error ? reason.message : String(reason));
       });
     };
@@ -338,35 +489,50 @@ export function useRecorder(kind: RecordingKind): RecorderController {
   }, [clearFlushTimer, flushPending]);
 
   const start = useCallback(async (extras: RecorderManifestExtras = {}) => {
-    if (recorderRef.current || stoppingRef.current) return;
+    if (startingRef.current || recorderRef.current || activeSessionIdRef.current || stoppingRef.current) return;
+    startingRef.current = true;
+    setStarting(true);
+    const id = sessionId(kind);
+    pendingRef.current = new Map();
+    pendingTotalsRef.current = { count: 0, bytes: 0 };
+    activeSessionIdRef.current = id;
+    setActive(true);
+    setError(null);
     try {
       if (kind === "communication" && extras.locatorCoordinates !== undefined) {
         throw new Error("locatorCoordinates may only be recorded in a locator/global session");
       }
       const store = storeRef.current ??= new OpfsFileStore();
-      const id = sessionId(kind);
       recorderRef.current = await SessionRecorder.create(store, {
         schemaVersion: 1,
         sessionId: id,
         kind,
+        recordingProfile: profileRef.current,
         startedAt: new Date().toISOString(),
         sourceCommits: { remote: BUILD_INFO.remoteSource, locator: BUILD_INFO.locatorSource },
         parserVersions: BUILD_INFO.parsers,
         ...(extras.notes === undefined ? {} : { notes: extras.notes }),
         ...(extras.locatorCoordinates === undefined ? {} : { locatorCoordinates: extras.locatorCoordinates }),
       });
-      activeSessionIdRef.current = id;
-      setActive(true);
-      setError(null);
+      await flushPending(recorderRef.current);
       await refresh();
     } catch (reason) {
+      recorderRef.current = null;
+      activeSessionIdRef.current = null;
+      pendingRef.current = new Map();
+      pendingTotalsRef.current = { count: 0, bytes: 0 };
+      setActive(false);
       setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      startingRef.current = false;
+      setStarting(false);
     }
-  }, [kind, refresh]);
+  }, [flushPending, kind, refresh]);
 
   const append = useCallback((artifact: RecordingArtifact, text: string, at = Date.now()) => {
     const recorder = recorderRef.current;
-    if (!recorder || stoppingRef.current) return undefined;
+    if ((!recorder && !activeSessionIdRef.current) || stoppingRef.current) return undefined;
+    if (profileRef.current === "quickSerial" && !QUICK_SERIAL_ARTIFACTS.has(artifact)) return undefined;
     const bytes = encoder.encode(text);
     if (bytes.byteLength === 0) return undefined;
     const pending = pendingRef.current.get(artifact) ?? {
@@ -384,6 +550,7 @@ export function useRecorder(kind: RecordingKind): RecorderController {
       count: pendingTotalsRef.current.count + 1,
       bytes: pendingTotalsRef.current.bytes + bytes.byteLength,
     };
+    if (!recorder) return undefined;
 
     if (
       pendingTotalsRef.current.bytes >= FLUSH_MAX_BYTES ||
@@ -402,7 +569,12 @@ export function useRecorder(kind: RecordingKind): RecorderController {
     if (!recorder || stoppingRef.current) return;
     const id = recorder.manifest.sessionId;
     stoppingRef.current = true;
+    const previousFlush = flushInFlightRef.current;
+    flushInFlightRef.current = null;
+    recorderRef.current = null;
+    activeSessionIdRef.current = null;
     setStopping(true);
+    setActive(false);
     setError(null);
     const pending = pendingTotalsRef.current;
     setDownloadProgress({
@@ -414,28 +586,25 @@ export function useRecorder(kind: RecordingKind): RecorderController {
       label: "正在停止录制",
       detail: pending.count > 0
         ? `正在落盘最后 ${pending.count} 条 / ${formatBytes(pending.bytes)}`
-        : "没有待落盘缓冲，正在关闭 session",
+        : "正在等待已排队写入完成",
     });
     try {
-      const flushed = await flushPending(recorder);
+      clearFlushTimer();
+      const { items, stats } = takePending();
       setDownloadProgress({
         phase: "stopping",
         sessionId: id,
-        current: 0,
-        total: 0,
-        percent: 0,
-        label: "正在关闭录制",
-        detail: flushed.count > 0
-          ? `最后 ${flushed.count} 条 / ${formatBytes(flushed.bytes)} 已落盘`
-          : "录制缓冲已清空",
+        current: 1,
+        total: 4,
+        percent: 5,
+        label: "旧录制已转入后台",
+        detail: stats.count > 0
+          ? `最后 ${stats.count} 条 / ${formatBytes(stats.bytes)} 将在后台落盘`
+          : "剩余缓冲已转入后台封存",
       });
-      await recorder.stop();
-      recorderRef.current = null;
-      activeSessionIdRef.current = null;
-      setActive(false);
+      closeStoppedSessionInBackground(recorder, id, items, stats, previousFlush);
       await waitForPaint();
-      enqueueExport(id);
-      await refresh();
+      void refresh();
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
       setDownloadProgress({
@@ -452,7 +621,7 @@ export function useRecorder(kind: RecordingKind): RecorderController {
       stoppingRef.current = false;
       setStopping(false);
     }
-  }, [enqueueExport, flushPending, refresh]);
+  }, [clearFlushTimer, closeStoppedSessionInBackground, refresh, takePending]);
 
   const downloadRecovered = useCallback(async (id: string) => {
     enqueueExport(id);
@@ -461,8 +630,10 @@ export function useRecorder(kind: RecordingKind): RecorderController {
   return useMemo(() => ({
     kind,
     active,
+    starting,
     stopping,
     exporting,
+    profile,
     exportQueue,
     exportQueuedIds: exportQueue,
     downloadProgress,
@@ -472,11 +643,14 @@ export function useRecorder(kind: RecordingKind): RecorderController {
     append,
     stopAndDownload,
     downloadRecovered,
+    setProfile,
   }), [
     kind,
     active,
+    starting,
     stopping,
     exporting,
+    profile,
     exportQueue,
     downloadProgress,
     recoverable,
@@ -485,5 +659,6 @@ export function useRecorder(kind: RecordingKind): RecorderController {
     append,
     stopAndDownload,
     downloadRecovered,
+    setProfile,
   ]);
 }

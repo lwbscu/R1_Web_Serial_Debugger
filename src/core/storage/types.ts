@@ -1,6 +1,7 @@
 import type { LocatorCoordinateContext } from "../locator";
 
 export type RecordingKind = "communication" | "locator" | "global";
+export type RecordingProfile = "quickSerial" | "full";
 
 export type CommunicationArtifact =
   | "remote_raw.log"
@@ -39,6 +40,7 @@ export interface SessionManifest {
   schemaVersion: 1;
   sessionId: string;
   kind: RecordingKind;
+  recordingProfile?: RecordingProfile;
   startedAt: string;
   sourceCommits?: {
     remote?: string;

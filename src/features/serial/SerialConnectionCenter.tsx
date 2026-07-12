@@ -126,7 +126,8 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
     void recorder.append("connection_status.csv", "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error\r\n");
   }, [locatorCoordinates, recorder]);
 
-  const recordingLabel = recorder.stopping ? "正在停止录制" : recorder.active ? "停止并后台下载" : "开始三串口录制";
+  const recordingLabel = recorder.starting ? "正在开始录制" : recorder.stopping ? "正在停止录制" : recorder.active ? "停止并后台下载" : "开始三串口录制";
+  const modeLocked = recorder.active || recorder.starting || recorder.stopping;
 
   return <section className="serial-center" aria-label="三串口连接中心">
     <div className="sidebar-section-label">三串口连接中心</div>
@@ -137,8 +138,13 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
       </div>
       <div className="serial-center-actions">
         <button type="button" onClick={requestOpenSerialDiscovery}>智能连接串口</button>
-        <button type="button" className={recorder.active ? "danger" : "secondary"} disabled={recorder.stopping} onClick={() => void (recorder.active ? recorder.stopAndDownload() : startRecording())}><RecordIcon />{recordingLabel}</button>
+        <button type="button" className={recorder.active && !recorder.starting ? "danger" : "secondary"} disabled={recorder.starting || recorder.stopping} onClick={() => void (recorder.active ? recorder.stopAndDownload() : startRecording())}><RecordIcon />{recordingLabel}</button>
       </div>
+      <div className="recording-profile-toggle" aria-label="录制包模式">
+        <button type="button" className={recorder.profile === "quickSerial" ? "selected" : "secondary"} disabled={modeLocked} aria-pressed={recorder.profile === "quickSerial"} onClick={() => recorder.setProfile("quickSerial")}>快速串口包</button>
+        <button type="button" className={recorder.profile === "full" ? "selected" : "secondary"} disabled={modeLocked} aria-pressed={recorder.profile === "full"} onClick={() => recorder.setProfile("full")}>完整诊断包</button>
+      </div>
+      <p className="recording-profile-hint">{recorder.profile === "quickSerial" ? "仅保存三路原始串口和连接状态，ZIP 内附 Codex 说明。" : "保存原始串口、解析 CSV、事件和诊断派生数据。"}</p>
       <div className="serial-role-list">
         {ORDER.map((role) => {
           const roleState = state.roles[role];

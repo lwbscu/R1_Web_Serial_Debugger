@@ -39,6 +39,14 @@ export interface ExportSessionProgress {
 }
 
 const encoder = new TextEncoder();
+const CODEX_README_NAME = "README_Codex.md";
+const QUICK_SERIAL_EXPORT_ARTIFACTS = new Set<RecordingArtifact>([
+  "remote_raw.log",
+  "chassis_raw.log",
+  "locator_raw.log",
+  "raw_serial.log",
+  "connection_status.csv",
+]);
 
 function concatenate(parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((size, part) => size + part.byteLength, 0);
@@ -102,6 +110,42 @@ function exportMetadata(
   );
 }
 
+function exportCodexReadme(manifest: SessionManifest): Uint8Array {
+  const profile = manifest.recordingProfile ?? "full";
+  const lines = [
+    "# R1 Recording Package",
+    "",
+    `sessionId: ${manifest.sessionId}`,
+    `kind: ${manifest.kind}`,
+    `profile: ${profile}`,
+    `startedAt: ${manifest.startedAt}`,
+    "",
+    "## 文件含义",
+    "",
+    "- `remote_raw.log`: 遥控器串口原始行。常见内容包括 `RDBG` 摘要和 `RDBG_TX` 真实 NRF 发包事件。",
+    "- `chassis_raw.log`: 底盘串口原始行。常见内容包括 `CDBG` 主诊断帧和 `CEVT` 事件。",
+    "- `locator_raw.log` / `raw_serial.log`: 定位/码盘板串口原始行。",
+    "- `connection_status.csv`: 三串口连接状态变化，包含 role、health、lifecycle、RX 字节和帧数。",
+    "- `session.json` / `metadata.json`: 录制会话、版本、分卷和时间窗口元数据。",
+    "",
+    "## 快速串口包",
+    "",
+    "快速串口包只保存原始串口数据和连接状态，便于 Codex 后续离线重放分析。",
+    "该模式不会保存解析派生 CSV、诊断事件 CSV，也不会包含地图 PNG 或网页画布导出。",
+    "",
+    "## 完整诊断包额外文件",
+    "",
+    "- `remote_rdbg.csv`: 遥控器 `RDBG` 解析前的时间戳+原始行。",
+    "- `remote_rdbg_tx.csv`: 遥控器 `RDBG_TX` 解析前的时间戳+原始行。",
+    "- `chassis_cdbg.csv`: 底盘 `CDBG` 解析前的时间戳+原始行。",
+    "- `chassis_cevt.csv`: 底盘 `CEVT` 解析前的时间戳+原始行。",
+    "- `locator_frames.csv` / `locator_display_frames.csv`: 定位串口解析和显示轨迹数据。",
+    "- `events.csv`: 网页实时诊断事件和解析错误摘要。",
+    "",
+  ];
+  return encoder.encode(lines.join("\n"));
+}
+
 function segmentBytes(segments: readonly StoredSegment[]): number {
   return segments.reduce((total, segment) => total + segment.sizeBytes, 0);
 }
@@ -121,6 +165,12 @@ function addZipFile(zip: Zip, name: string, bytes: Uint8Array, level: ExportSess
   const file = new AsyncZipDeflate(name, { level: zipCompressionLevel(level) });
   zip.add(file);
   file.push(bytes, true);
+}
+
+function artifactsForExport(manifest: SessionManifest): readonly RecordingArtifact[] {
+  const artifacts = expectedArtifacts(manifest.kind);
+  if (manifest.recordingProfile !== "quickSerial") return artifacts;
+  return artifacts.filter((artifact) => QUICK_SERIAL_EXPORT_ARTIFACTS.has(artifact));
 }
 
 async function buildZipVolume(
@@ -150,7 +200,7 @@ async function buildZipVolume(
   });
 
   try {
-    for (const artifact of expectedArtifacts(manifest.kind)) {
+    for (const artifact of artifactsForExport(manifest)) {
       if (artifact === metadataName) continue;
       const level = zipCompressionLevel(compressionLevel);
       const file = level === 0
@@ -168,6 +218,7 @@ async function buildZipVolume(
     }
     await onCompressing();
     addZipFile(archive, metadataName, metadata, compressionLevel);
+    addZipFile(archive, CODEX_README_NAME, exportCodexReadme(manifest), compressionLevel);
     archive.end();
     return await done;
   } catch (error) {

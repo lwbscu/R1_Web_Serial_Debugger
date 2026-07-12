@@ -193,6 +193,33 @@ test("shows progress while stopping and downloading a local recording", async ({
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
 });
 
+test("stops and downloads a 31 second mock serial recording without blocking the next one", async ({ page }) => {
+  test.setTimeout(180_000);
+  await installMockSerial(page);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "智能连接串口" }).first().click();
+  await page.getByRole("button", { name: "批量探测已授权串口" }).click();
+  await expect(page.getByRole("status")).toContainText("3 个已自动绑定并连接", { timeout: 10_000 });
+  await page.getByRole("button", { name: "关闭" }).click();
+
+  await page.getByRole("button", { name: "开始三串口录制", exact: true }).click();
+  await expect(page.getByRole("button", { name: /正在开始录制|停止并后台下载/ })).toBeVisible({ timeout: 1_000 });
+  await expect(page.getByRole("button", { name: "停止并后台下载", exact: true })).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(31_000);
+
+  const download = page.waitForEvent("download", { timeout: 120_000 });
+  await page.getByRole("button", { name: "停止并后台下载", exact: true }).click();
+  await expect(page.getByRole("button", { name: "开始三串口录制", exact: true })).toBeVisible({ timeout: 3_000 });
+  await page.getByRole("button", { name: "开始三串口录制", exact: true }).click();
+  await expect(page.getByRole("button", { name: /正在开始录制|停止并后台下载/ })).toBeVisible({ timeout: 1_000 });
+  const communicationStatus = page.getByRole("status").filter({ hasText: "后台生成下载" });
+  await expect(communicationStatus).toContainText(/后台落盘旧录制|后台写入关闭检查点|后台导出已入队|后台压缩 ZIP|下载已触发/);
+  expect((await download).suggestedFilename()).toMatch(/^global_/);
+  await expect(communicationStatus).toContainText("100%", { timeout: 120_000 });
+});
+
 test("shows diagnostic tooltips and a working multi-series waveform demo", async ({ page }) => {
   await disableWebSerial(page);
   await page.setViewportSize({ width: 1600, height: 1000 });

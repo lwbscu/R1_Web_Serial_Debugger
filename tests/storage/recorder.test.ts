@@ -136,6 +136,7 @@ describe("session export", () => {
     ]);
     const first = unzipSync(volumes[0]!.bytes);
     expect(Object.keys(first).sort()).toEqual([
+      "README_Codex.md",
       "chassis_cdbg.csv",
       "chassis_cevt.csv",
       "chassis_raw.log",
@@ -147,6 +148,7 @@ describe("session export", () => {
     ]);
     expect(decoder.decode(first["remote_raw.log"]!)).toBe("RDBG-A\n");
     expect(JSON.parse(decoder.decode(first["session.json"]!)).export.volumeCount).toBe(2);
+    expect(decoder.decode(first["README_Codex.md"]!)).toContain("remote_raw.log");
   });
 
   it("neutralizes formulas and quotes CSV fields", () => {
@@ -259,6 +261,7 @@ describe("session export", () => {
     const [volume] = await exportSession(store, globalManifest.sessionId, { compressionLevel: 0 });
     const entries = unzipSync(volume!.bytes);
     expect(Object.keys(entries).sort()).toEqual([
+      "README_Codex.md",
       "chassis_cdbg.csv",
       "chassis_cevt.csv",
       "chassis_raw.log",
@@ -276,5 +279,34 @@ describe("session export", () => {
     expect(metadata.kind).toBe("global");
     expect(metadata.locatorCoordinates).toEqual(globalManifest.locatorCoordinates);
     expect(decoder.decode(entries["connection_status.csv"]!)).toContain("not_connected");
+  });
+
+  it("exports quick serial packages without derived CSV artifacts", async () => {
+    const store = new MemoryFileStore();
+    const quickManifest = {
+      ...manifest("global"),
+      recordingProfile: "quickSerial" as const,
+    };
+    const recorder = await SessionRecorder.create(store, quickManifest);
+    await recorder.append("remote_raw.log", "100,RDBG,...\n", 1);
+    await recorder.append("remote_rdbg_tx.csv", "100,RDBG_TX,...\n", 1);
+    await recorder.append("chassis_raw.log", "101,CDBG,...\n", 2);
+    await recorder.append("chassis_cevt.csv", "101,CEVT,...\n", 2);
+    await recorder.append("locator_raw.log", "[0.1] $R1M,...\n", 3);
+    await recorder.append("locator_frames.csv", "110,$R1M,...\n", 3);
+    await recorder.append("connection_status.csv", encodeCsvRow([1, "remote", "connected"]));
+    await recorder.stop(4);
+
+    const [volume] = await exportSession(store, quickManifest.sessionId, { compressionLevel: 0 });
+    const entries = unzipSync(volume!.bytes);
+    expect(Object.keys(entries).sort()).toEqual([
+      "README_Codex.md",
+      "chassis_raw.log",
+      "connection_status.csv",
+      "locator_raw.log",
+      "remote_raw.log",
+      "session.json",
+    ]);
+    expect(decoder.decode(entries["README_Codex.md"]!)).toContain("快速串口包只保存原始串口数据");
   });
 });
