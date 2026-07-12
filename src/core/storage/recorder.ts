@@ -1,3 +1,4 @@
+import { parseLocatorCoordinateMetadata } from "../locator";
 import { type SessionFileStore, type StoredData, toBytes } from "./fileStore";
 import {
   DEFAULT_ROLLING_POLICY,
@@ -67,6 +68,15 @@ export class SessionRecorder {
     manifest: SessionManifest,
     options: SessionRecorderOptions = {},
   ): Promise<SessionRecorder> {
+    if (manifest.kind === "communication" && manifest.locatorCoordinates !== undefined) {
+      throw new Error("locatorCoordinates may only be stored in a locator session");
+    }
+    if (
+      manifest.locatorCoordinates !== undefined &&
+      parseLocatorCoordinateMetadata(manifest.locatorCoordinates) === null
+    ) {
+      throw new Error("Invalid locatorCoordinates recording metadata");
+    }
     const root = sessionRoot(manifest.sessionId);
     if (await store.exists(`${root}/checkpoint.json`)) {
       throw new Error(`Recording session already exists: ${manifest.sessionId}`);
@@ -107,6 +117,15 @@ export class SessionRecorder {
       manifest.kind !== checkpoint.kind
     ) {
       throw new Error(`Recording manifest/checkpoint mismatch for ${sessionId}`);
+    }
+    if (manifest.kind === "communication" && manifest.locatorCoordinates !== undefined) {
+      throw new Error(`Invalid locator coordinate metadata for ${sessionId}`);
+    }
+    if (
+      manifest.locatorCoordinates !== undefined &&
+      parseLocatorCoordinateMetadata(manifest.locatorCoordinates) === null
+    ) {
+      throw new Error(`Invalid locator coordinate metadata for ${sessionId}`);
     }
     if (checkpoint.status === "exported") {
       throw new Error(`Recording session was already exported: ${sessionId}`);

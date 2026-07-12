@@ -54,6 +54,19 @@ describe("SessionRecorder", () => {
     expect(decoder.decode(await store.read(path!))).toBe("first\nsecond\n");
   });
 
+  it("rejects locator coordinate metadata on communication sessions", async () => {
+    const store = new MemoryFileStore();
+    await expect(SessionRecorder.create(store, {
+      ...manifest(),
+      locatorCoordinates: {
+        side: "red",
+        coordinateSpace: "start-relative",
+        transformVersion: "r1-start-relative-v1",
+        fieldAnchorCm: { x: -555.7, y: 549, yawDeg: 0 },
+      },
+    })).rejects.toThrow(/locator session/);
+  });
+
   it("splits a single oversized append across bounded segments", async () => {
     const store = new MemoryFileStore();
     const recorder = await SessionRecorder.create(store, manifest(), {
@@ -157,5 +170,25 @@ describe("session export", () => {
     expect(progress).toContain("reading:2/2:100:8/8:");
     expect(progress).toContain("ready:2/2:100:8/8:communication-test_part002_of_002.zip");
     expect(progress.at(-1)).toBe("done:2/2:100:8/8:");
+  });
+
+  it("preserves locator coordinate context in exported metadata", async () => {
+    const store = new MemoryFileStore();
+    const locatorManifest = {
+      ...manifest("locator"),
+      locatorCoordinates: {
+        side: "red" as const,
+        coordinateSpace: "start-relative" as const,
+        transformVersion: "r1-start-relative-v1" as const,
+        fieldAnchorCm: { x: -555.7, y: 549, yawDeg: 0 as const },
+      },
+    };
+    const recorder = await SessionRecorder.create(store, locatorManifest);
+    await recorder.append("display_frames.csv", "x,y,yaw\n0,0,0\n", 1);
+    await recorder.stop(2);
+    const [volume] = await exportSession(store, locatorManifest.sessionId);
+    const entries = unzipSync(volume!.bytes);
+    const metadata = JSON.parse(decoder.decode(entries["metadata.json"]!));
+    expect(metadata.locatorCoordinates).toEqual(locatorManifest.locatorCoordinates);
   });
 });

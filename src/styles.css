@@ -276,6 +276,13 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .studio-card > button + button { margin-top: 6px; }
 .studio-hint { margin: 10px 0 0; color: #60778a; font-size: 9px; line-height: 1.55; }
 .map-stage { display: flex; min-width: 0; min-height: clamp(580px, calc(100vh - 350px), 780px); overflow: hidden; border: 1px solid #2a3c49; border-radius: 11px; background: #10151c; box-shadow: var(--shadow); flex-direction: column; }
+.map-side-toolbar { display: flex; align-items: center; gap: 10px; min-height: 48px; padding: 7px 12px; border-bottom: 1px solid #263a49; background: #0c171f; }
+.map-side-toolbar > span { flex: 1; color: #8ba2b3; font-size: 11px; line-height: 1.35; }
+.side-selector { display: inline-flex; flex: 0 0 auto; gap: 3px; padding: 3px; border: 1px solid #314858; border-radius: 8px; background: #071019; }
+.side-selector button { min-width: 64px; padding: 7px 13px; border: 1px solid transparent; background: transparent; color: #91a7b7; box-shadow: none; }
+.side-selector .side-red.selected { border-color: #ff6574; background: rgba(213,42,65,.2); color: #ffb1b9; }
+.side-selector .side-blue.selected { border-color: #56a8ff; background: rgba(38,117,210,.22); color: #b5d9ff; }
+.side-selector button:disabled { cursor: not-allowed; opacity: .55; }
 .map-stage-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; min-height: 42px; padding: 8px 12px; border-bottom: 1px solid #263a49; background: #0a131b; }
 .map-stage-head > span { color: #657d8f; font: 9px ui-monospace, monospace; }
 .map-series-legend { display: flex; flex-wrap: wrap; gap: 11px; font: 9px ui-monospace, monospace; }
@@ -429,6 +436,10 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 }
 
 @media (max-width: 680px) {
+  .map-side-toolbar { align-items: flex-start; flex-wrap: wrap; }
+  .map-side-toolbar > span { flex-basis: calc(100% - 150px); }
+  .side-selector { width: 100%; }
+  .side-selector button { flex: 1; }
   .app-shell { display: block; }
   .sidebar { position: sticky; width: 100%; height: auto; padding: 8px 12px; flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid #1d2d39; }
   .brand { padding: 0; }

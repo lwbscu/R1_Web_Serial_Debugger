@@ -84,11 +84,16 @@ export function demoChassisFrame(atMs = Date.now()): ChassisFrame {
   return frame;
 }
 
-export function demoLocatorFrame(atMs = Date.now()): LocatorFrame {
+export function demoLocatorFrame(atMs = Date.now(), elapsedMs = atMs): LocatorFrame {
   const t = atMs / 1000;
-  const angle = t / 7;
-  const x = Math.sin(angle) * 330;
-  const y = Math.cos(angle * 0.83) * 360;
+  // Hold the origin briefly so the initial (0,0,0) contract is visible and
+  // deterministic before the demonstration begins moving.
+  const elapsed = Math.max(0, elapsedMs - 2_000) / 1000;
+  const angle = elapsed / 7;
+  // The demo is deliberately start-relative and begins at (0, 0). Its small
+  // footprint stays inside the fixed field when projected from either anchor.
+  const x = Math.sin(angle) * 32;
+  const y = -(1 - Math.cos(angle * 0.83)) * 55;
   const yaw = ((angle * 180 / Math.PI) * 1.15) % 360;
   return {
     observedAtMs: atMs,

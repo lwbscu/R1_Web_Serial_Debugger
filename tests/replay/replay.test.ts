@@ -108,6 +108,66 @@ describe("loadReplayZip", () => {
     expect(bundle.name).toBe("session.zip");
     expect(bundle.tracks.map((track) => track.name)).toEqual(["remote_raw.log"]);
     expect(bundle.tracks[0]?.records[0]?.payload).toBe("RDBG,1");
+    expect(bundle.tracks[0]?.coordinateSpace).toBe("unknown");
     expect(bundle.metadata).toEqual({ schemaVersion: 1 });
+  });
+
+  it("marks raw locator data as start-relative regardless of metadata", () => {
+    const archive = zipSync({
+      "raw_serial.log": new TextEncoder().encode("0,0,0\n"),
+      "raw_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
+      "metadata.json": new TextEncoder().encode('{"coordinateSpace":"field"}'),
+    });
+    const bundle = loadReplayZip(archive);
+    expect(bundle.tracks.map((track) => [track.name, track.coordinateSpace])).toEqual([
+      ["raw_serial.log", "start-relative"],
+      ["raw_frames.csv", "start-relative"],
+    ]);
+  });
+
+  it("uses new web metadata for relative display frames", () => {
+    const archive = zipSync({
+      "display_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
+      "metadata.json": new TextEncoder().encode(JSON.stringify({
+        locatorCoordinates: {
+          side: "blue",
+          coordinateSpace: "start-relative",
+          transformVersion: "r1-start-relative-v1",
+          fieldAnchorCm: { x: 548.5, y: 548, yawDeg: 0 },
+        },
+      })),
+    });
+    expect(loadReplayZip(archive).tracks[0]?.coordinateSpace).toBe("start-relative");
+  });
+
+  it("treats legacy display frames without metadata as baked field coordinates", () => {
+    const archive = zipSync({
+      "display_frames.csv": new TextEncoder().encode("x,y,yaw\n-555.7,549,0\n"),
+    });
+    expect(loadReplayZip(archive).tracks[0]?.coordinateSpace).toBe("field");
+  });
+
+  it("recognizes legacy field coordinate metadata when a side is recorded", () => {
+    const zip = zipSync({
+      "display_frames.csv": new TextEncoder().encode("x,y,yaw\n-555.7,549,0\n"),
+      "metadata.json": new TextEncoder().encode(JSON.stringify({ locatorCoordinates: { coordinateSpace: "field", side: "red" } })),
+    });
+    expect(loadReplayZip(zip).tracks[0]?.coordinateSpace).toBe("field");
+  });
+
+  it("keeps explicitly unsupported coordinate metadata unknown", () => {
+    const archive = zipSync({
+      "display_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
+      "metadata.json": new TextEncoder().encode('{"coordinateSpace":"mystery"}'),
+    });
+    expect(loadReplayZip(archive).tracks[0]?.coordinateSpace).toBe("unknown");
+  });
+
+  it("does not guess the coordinate space when metadata JSON is corrupt", () => {
+    const archive = zipSync({
+      "display_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
+      "metadata.json": new TextEncoder().encode("{broken"),
+    });
+    expect(loadReplayZip(archive).tracks[0]?.coordinateSpace).toBe("unknown");
   });
 });

@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReceivedLine } from "../../core/serial";
-import { loadReplayFile, ReplayClock, type ReplayClockSnapshot, type ReplayRecord } from "../../core/replay";
+import { loadReplayFile, ReplayClock, type ReplayClockSnapshot, type ReplayCoordinateSpace, type ReplayRecord } from "../../core/replay";
+import {
+  contextForSide,
+  restoreLocatorFrameFromField,
+  type LocatorCoordinateContext,
+  type LocatorSide,
+} from "../../core/locator";
 import { encodeCsvRow } from "../../core/storage";
 import { publishFrame, telemetryHub } from "../../core/telemetry";
 import { LocatorProtocolAdapter, type LocatorFrame } from "../../protocols";
@@ -16,6 +22,7 @@ import { useRecorder } from "../recording/useRecorder";
 import { usePortSession } from "../serial/usePortSession";
 import { FieldMap, type MapTrails } from "./FieldMap";
 import type { Point } from "./geometry";
+import { displayReplayFrame, replayCoordinateContext } from "./replayDisplay";
 
 const EMPTY_TRAILS: MapTrails = { final: [], calib: [], lidar: [] };
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5] as const;
@@ -34,6 +41,9 @@ function sensorClass(ok: boolean | undefined): string { return ok ? "online" : "
 export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   const adapter = useMemo(() => new LocatorProtocolAdapter(), []);
   const recorder = useRecorder("locator");
+  const [recordingStarting, setRecordingStarting] = useState(false);
+  const [side, setSide] = useState<LocatorSide>("red");
+  const coordinateContext = useMemo(() => contextForSide(side), [side]);
   const [frame, setFrame] = useState<LocatorFrame | null>(null);
   const [trails, setTrails] = useState<MapTrails>(EMPTY_TRAILS);
   const [logs, setLogs] = useState<string[]>([]);
@@ -44,6 +54,10 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   const [replayName, setReplayName] = useState("");
   const [replayError, setReplayError] = useState<string | null>(null);
   const clockRef = useRef<ReplayClock | null>(null);
+  const replayCoordinateSpaceRef = useRef<ReplayCoordinateSpace>("start-relative");
+  const replayContextRef = useRef<LocatorCoordinateContext | null>(null);
+  const replayTrackNameRef = useRef("");
+  const demoStartedAtRef = useRef(0);
   const frozenLogs = useRef<string[] | null>(null);
 
   const consumeFrame = useCallback((input: LocatorFrame, record = true, origin: "serial" | "replay" | "demo" = "serial") => {
@@ -102,7 +116,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
 
   useEffect(() => {
     if (!demoActive) return;
-    const tick = () => consumeFrame(demoLocatorFrame(Date.now()), false, "demo");
+    const tick = () => { const now = Date.now(); consumeFrame(demoLocatorFrame(now, now - demoStartedAtRef.current), false, "demo"); };
     tick();
     const timer = window.setInterval(tick, 50);
     return () => window.clearInterval(timer);
@@ -115,18 +129,39 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   }, [active, stopDemo]);
 
   const consumeReplay = useCallback((record: ReplayRecord) => {
+    const displayFrame = /display_frames/i.test(replayTrackNameRef.current) ? displayReplayFrame(record, adapter) : null;
     const payload = record.columns?.raw_line ?? record.columns?.column_2 ?? record.payload;
-    const outcome = adapter.parse(payload, record.observedAtMs ?? performance.now());
-    if (outcome.kind === "frame") consumeFrame(outcome.frame, false, "replay");
-  }, [adapter, consumeFrame]);
+    const outcome = displayFrame ? { kind: "frame" as const, frame: displayFrame } : adapter.parse(payload, record.observedAtMs ?? performance.now());
+    if (outcome.kind === "frame") {
+      const next = replayCoordinateSpaceRef.current === "field"
+        ? restoreLocatorFrameFromField(outcome.frame, replayContextRef.current ?? coordinateContext)
+        : outcome.frame;
+      consumeFrame(next, false, "replay");
+    }
+  }, [adapter, consumeFrame, coordinateContext]);
 
   const openReplay = async (file: File) => {
     try {
+      if (recordingStarting || recorder.active || recorder.exporting) throw new Error("录制期间不能加载回放或改变阵营，请先停止并下载当前录制。");
       if (port.snapshot.lifecycle === "reading") throw new Error("请先断开定位串口，再加载回放文件。");
       stopDemo();
       clockRef.current?.stop();
       const bundle = await loadReplayFile(file);
-      const records = bundle.tracks.find((track) => /raw_serial|raw_frames|display_frames/i.test(track.name))?.records ?? bundle.tracks[0]?.records ?? [];
+      const selectedTrack = bundle.tracks.find((track) => /raw_serial/i.test(track.name))
+        ?? bundle.tracks.find((track) => /raw_frames/i.test(track.name))
+        ?? bundle.tracks.find((track) => /display_frames/i.test(track.name))
+        ?? bundle.tracks[0];
+      if (!selectedTrack) throw new Error("回放包中没有可用的定位数据轨道。");
+      if (selectedTrack.coordinateSpace === "unknown") throw new Error("该回放无法确认坐标空间，已拒绝静默猜测。请使用包含 metadata.json 的新会话包或原始串口日志。");
+      const metadataRoot = bundle.metadata && typeof bundle.metadata === "object" ? bundle.metadata as Record<string, unknown> : null;
+      const recordedContext = replayCoordinateContext(metadataRoot?.locatorCoordinates ?? bundle.metadata)
+        ?? replayCoordinateContext(bundle.metadata);
+      replayCoordinateSpaceRef.current = selectedTrack.coordinateSpace;
+      replayContextRef.current = recordedContext;
+      replayTrackNameRef.current = selectedTrack.name;
+      if (recordedContext) setSide(recordedContext.side);
+      if (selectedTrack.coordinateSpace === "field" && !recordedContext) throw new Error("旧 display_frames.csv 已烘焙场地坐标，但缺少阵营元数据，无法安全反算相对坐标。");
+      const records = selectedTrack.records;
       const clock = new ReplayClock(records, { onRecord: consumeReplay, onStateChange: setReplay });
       clockRef.current = clock;
       setReplay(clock.snapshot); setReplayName(file.name); setReplayError(null); setTrails(EMPTY_TRAILS); setFrame(null);
@@ -139,7 +174,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   };
   const toggleDemo = () => {
     if (demoActive) { stopDemo(); return; }
-    stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); setDemoActive(true);
+    stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); demoStartedAtRef.current = Date.now(); setDemoActive(true);
   };
   const seek = (index: number) => {
     const clock = clockRef.current;
@@ -153,14 +188,21 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
     canvas?.toBlob((blob) => {
       if (!blob) return;
       const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
-      anchor.href = url; anchor.download = `r1-map-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.png`; anchor.click();
+      anchor.href = url; anchor.download = `r1-map-${side}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.png`; anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }, "image/png");
   };
-  const exportSnapshot = () => downloadText(`r1-locator-state-${Date.now()}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), frame, mouse, replay }, null, 2), "application/json;charset=utf-8");
+  const exportSnapshot = () => downloadText(`r1-locator-state-${Date.now()}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), frame, mouse, renderContext: coordinateContext, replay }, null, 2), "application/json;charset=utf-8");
   const resetViewData = () => { setTrails(EMPTY_TRAILS); setFrame(null); };
   const serialBusy = port.snapshot.lifecycle === "reading";
   const recordingButtonLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始本地录制";
+  const sideLocked = recordingStarting || recorder.active || recorder.exporting;
+  const startRecording = async () => {
+    if (sideLocked) return;
+    setRecordingStarting(true);
+    try { await recorder.start({ locatorCoordinates: coordinateContext }); }
+    finally { setRecordingStarting(false); }
+  };
   const visibleLogs = rawPaused ? frozenLogs.current ?? logs : logs;
   const toggleRawPause = () => {
     if (rawPaused) frozenLogs.current = null;
@@ -170,8 +212,8 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
 
   return <main className="workspace locator-workspace" data-testid="locator-workspace">
     <WorkspaceHeader kicker="R1 LOCATER MAP" title="定位地图" description="直接使用冻结 Python 上位机的原始场地图与 R1 机器人贴图；支持鼠标锚点缩放、拖拽平移、图层控制、轨迹及 DT35 场地残差悬停。"
-      meta={<><span>1215 × 1210 cm</span><span>origin center</span><span>+Y forward</span><span>30 FPS UI</span></>}
-      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={toggleDemo}>{demoActive ? "停止演示" : "演示轨迹"}</button><button className="secondary" onClick={saveMap}>导出地图画布</button><button type="button" className={recorder.active ? "danger" : ""} disabled={recorder.exporting} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recordingButtonLabel}</button></>} />
+      meta={<><span>1215 × 1210 cm</span><span>起点相对坐标</span><span>+Y forward</span><span>30 FPS UI</span></>}
+      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={toggleDemo}>{demoActive ? "停止演示" : "演示轨迹"}</button><button className="secondary" onClick={saveMap}>导出地图画布</button><button type="button" className={recorder.active ? "danger" : ""} disabled={recorder.exporting || recordingStarting} onClick={() => void (recorder.active ? recorder.stopAndDownload() : startRecording())}><RecordIcon />{recordingStarting ? "正在启动录制" : recordingButtonLabel}</button></>} />
 
     {!port.supported && <div className="unsupported">当前浏览器不支持 Web Serial。日志回放、地图交互和演示轨迹仍可使用；实时采集请使用桌面版 Chrome/Edge。</div>}
     <RecordingDownloadProgress progress={recorder.downloadProgress} />
@@ -183,7 +225,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
       <aside className="locator-side locator-replay-panel">
         <section className="studio-card">
           <header><span>REPLAY</span><strong>日志回放</strong><InfoTip label="定位日志回放说明">支持 raw log、CSV 和本站导出的 ZIP 会话包。播放按日志时间推进，单步只前进一帧，0.25× 至 5× 调整回放时间倍率。实时串口连接期间禁用回放，拖动进度会立即重建当前位置。</InfoTip></header>
-          <label className={`file-drop${serialBusy ? " disabled" : ""}`}>选择 raw log / CSV / ZIP<input type="file" accept=".log,.txt,.csv,.zip" disabled={serialBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void openReplay(file); }} /></label>
+          <label className={`file-drop${serialBusy || sideLocked ? " disabled" : ""}`}>选择 raw log / CSV / ZIP<input type="file" accept=".log,.txt,.csv,.zip" disabled={serialBusy || sideLocked} onChange={(event) => { const file = event.target.files?.[0]; if (file) void openReplay(file); }} /></label>
           <p className="file-name" title={replayName}>{replayName || "尚未加载文件"}</p>
           <div className="replay-primary"><button onClick={playReplay} disabled={replay.length === 0 || serialBusy}>播放</button><button className="secondary" onClick={() => clockRef.current?.pause()} disabled={replay.state !== "playing"}>暂停</button><button className="secondary" onClick={() => { stopDemo(); clockRef.current?.step(); }} disabled={replay.length === 0 || serialBusy}>单步</button></div>
           <input className="replay-slider" aria-label="回放进度" type="range" min={0} max={Math.max(0, replay.length - 1)} value={Math.min(replay.index, Math.max(0, replay.length - 1))} disabled={replay.length === 0 || serialBusy} onChange={(event) => seek(Number(event.target.value))} />
@@ -193,7 +235,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
         </section>
 
         <section className="studio-card">
-          <header><span>DISPLAY</span><strong>视图与数据</strong><InfoTip label="定位视图操作说明">清除三轨迹会清空 Final、Calib、LiDAR 的页面轨迹和当前帧，不删除录制文件。状态 JSON 只导出当前帧、鼠标世界坐标和回放状态；地图画布按钮另行导出当前可见图像。</InfoTip></header>
+          <header><span>DISPLAY</span><strong>视图与数据</strong><InfoTip label="定位视图操作说明">清除三轨迹会清空 Final、Calib、LiDAR 的页面轨迹和当前帧，不删除录制文件。状态 JSON 导出相对定位值，并将场地锚点单独保存到 renderContext；地图画布按钮另行导出当前可见图像。</InfoTip></header>
           <button className="secondary wide" onClick={resetViewData}>清除三轨迹</button>
           <button className="secondary wide" onClick={exportSnapshot}>导出当前状态 JSON</button>
           <p className="studio-hint">地图右上角控制七类图层与跟随。滚轮以鼠标为中心缩放，拖拽平移；跟随开启时每帧自动回中。</p>
@@ -201,8 +243,16 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
       </aside>
 
       <section className="map-stage">
-        <div className="map-stage-head"><div className="map-series-legend"><span className="final">Final</span><span className="calib">Calib</span><span className="lidar">LiDAR</span><span className="dt-state">DT35 状态色</span><span className="dt-expected">DT35 期望</span><InfoTip label="地图图例与坐标说明">Final 是融合后定位，Calib 是标定/校正轨迹，LiDAR 是激光定位轨迹。场地中心为原点，单位 cm，+Y 指向场地前方；YAW 单位为度。DT35 实线按有效状态着色，期望线表示依据场地几何计算的最近命中距离，二者差值用于观察残差。</InfoTip></div><span>{mouse ? `X ${mouse.x.toFixed(1)} · Y ${mouse.y.toFixed(1)} cm` : "移动鼠标读取世界坐标"}</span></div>
-        <FieldMap frame={frame} trails={trails} onMousePositionChange={setMouse} />
+        <div className="map-side-toolbar">
+          <div className="side-selector" role="group" aria-label="定位阵营">
+            <button type="button" className={side === "red" ? "side-red selected" : "side-red"} aria-pressed={side === "red"} disabled={sideLocked} onClick={() => { setSide("red"); setMouse(null); }}>红方</button>
+            <button type="button" className={side === "blue" ? "side-blue selected" : "side-blue"} aria-pressed={side === "blue"} disabled={sideLocked} onClick={() => { setSide("blue"); setMouse(null); }}>蓝方</button>
+          </div>
+          <span>{sideLocked ? "录制中已锁定阵营" : "双方起点均显示相对 (0,0,0)；切换只改变场地图放置锚点"}</span>
+          <InfoTip label="红蓝方相对坐标说明">串口、日志、回放、轨迹、姿态卡和示波器始终使用机器人初始化位置为零点的相对坐标。红蓝按钮只改变机器人与轨迹在固定场地背景上的内部放置锚点，不旋转、不镜像，也不会清空已有轨迹。</InfoTip>
+        </div>
+        <div className="map-stage-head"><div className="map-series-legend"><span className="final">Final</span><span className="calib">Calib</span><span className="lidar">LiDAR</span><span className="dt-state">DT35 状态色</span><span className="dt-expected">DT35 期望</span><InfoTip label="地图图例与坐标说明">Final、Calib、LiDAR 均显示机器人初始点相对轨迹，单位 cm，+Y 方向在红蓝方保持一致；YAW 不旋转、不镜像。场地背景固定，DT35 几何计算仅在 Canvas 内部使用阵营锚点。</InfoTip></div><span>{mouse ? `相对 X ${mouse.x.toFixed(1)} · Y ${mouse.y.toFixed(1)} cm` : "移动鼠标读取起点相对坐标"}</span></div>
+        <FieldMap frame={frame} trails={trails} coordinateContext={coordinateContext} onMousePositionChange={setMouse} />
       </section>
 
       <aside className="locator-side locator-inspector">

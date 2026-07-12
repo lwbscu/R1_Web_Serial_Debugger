@@ -2,6 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
 import type { LocatorFrame } from "../../protocols";
 import {
+  fieldToLocal,
+  localToField,
+  projectLocatorFrameToField,
+  type LocatorCoordinateContext,
+} from "../../core/locator";
+import {
   DT35_MOUNTS,
   FIELD_BOUNDS,
   FIELD_HEIGHT_CM,
@@ -29,6 +35,7 @@ export type MapLayer = "pos" | "calib" | "lidar" | "dt35" | "field_model" | "gri
 export interface FieldMapProps {
   frame: LocatorFrame | null;
   trails: MapTrails;
+  coordinateContext: LocatorCoordinateContext;
   initialFollow?: boolean;
   initialLayers?: Partial<Record<MapLayer, boolean>>;
   onMousePositionChange?: (point: Point) => void;
@@ -112,13 +119,14 @@ function drawPolyline(
   xKey: "posXcm" | "calibXcm" | "lidarXcm",
   yKey: "posYcm" | "calibYcm" | "lidarYcm",
   color: string,
+  coordinateContext: LocatorCoordinateContext,
   requireLidar = false,
 ): void {
   const points = filteredTrail(frames, xKey, yKey, requireLidar);
   if (points.length < 2) return;
   ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
   points.forEach((frame, index) => {
-    const point = worldToCanvas({ x: frame[xKey], y: frame[yKey] }, view);
+    const point = worldToCanvas(localToField({ x: frame[xKey], y: frame[yKey] }, coordinateContext), view);
     if (index === 0) ctx.moveTo(point.x, point.y); else ctx.lineTo(point.x, point.y);
   });
   ctx.stroke();
@@ -143,7 +151,15 @@ function drawFieldModel(ctx: CanvasRenderingContext2D, view: MapViewport): void 
   ctx.setLineDash([]);
 }
 
-function featureAt(world: Point, view: MapViewport, rays: readonly Dt35Ray[], frame: LocatorFrame | null): string | null {
+function featureAt(
+  world: Point,
+  view: MapViewport,
+  rays: readonly Dt35Ray[],
+  fieldFrame: LocatorFrame | null,
+  localFrame: LocatorFrame | null,
+  trails: MapTrails,
+  coordinateContext: LocatorCoordinateContext,
+): string | null {
   const thresholdCm = 10 / (fitScale(view) * view.zoom);
   for (const ray of rays) {
     if (distanceToSegment(world, ray.sensor, ray.displayHit) <= thresholdCm || Math.hypot(world.x - ray.displayHit.x, world.y - ray.displayHit.y) <= thresholdCm * 1.5) {
@@ -151,19 +167,33 @@ function featureAt(world: Point, view: MapViewport, rays: readonly Dt35Ray[], fr
     }
     if (ray.expectedHit && distanceToSegment(world, ray.sensor, ray.expectedHit) <= thresholdCm * .7) return dt35Tooltip(ray);
   }
-  if (frame) {
-    const yaw = frame.posYawDeg * Math.PI / 180;
-    const dx = world.x - frame.posXcm;
-    const dy = world.y - frame.posYcm;
+  if (fieldFrame && localFrame) {
+    const yaw = fieldFrame.posYawDeg * Math.PI / 180;
+    const dx = world.x - fieldFrame.posXcm;
+    const dy = world.y - fieldFrame.posYcm;
     const localX = dx * Math.cos(yaw) - dy * Math.sin(yaw);
     const localY = dx * Math.sin(yaw) + dy * Math.cos(yaw);
     if (Math.abs(localX) <= 41.5 && Math.abs(localY) <= 41.5) {
       return [
         "R1 机器人",
-        `Final x=${frame.posXcm.toFixed(2)} cm · y=${frame.posYcm.toFixed(2)} cm`,
-        `yaw=${frame.posYawDeg.toFixed(2)}° · H30=${frame.h30YawDeg.toFixed(2)}°`,
-        `LiDAR ${frame.lidarOnline ? "在线" : "离线"} · DT35 ${frame.dt35_1Valid ? "1✓" : "1×"}/${frame.dt35_2Valid ? "2✓" : "2×"}`,
+        `相对位置 x=${localFrame.posXcm.toFixed(2)} cm · y=${localFrame.posYcm.toFixed(2)} cm`,
+        `yaw=${localFrame.posYawDeg.toFixed(2)}° · H30=${localFrame.h30YawDeg.toFixed(2)}°`,
+        `LiDAR ${localFrame.lidarOnline ? "在线" : "离线"} · DT35 ${localFrame.dt35_1Valid ? "1✓" : "1×"}/${localFrame.dt35_2Valid ? "2✓" : "2×"}`,
       ].join("\n");
+    }
+  }
+  const trailDefinitions = [
+    ["Final", trails.final, "posXcm", "posYcm"],
+    ["Calib", trails.calib, "calibXcm", "calibYcm"],
+    ["LiDAR", trails.lidar, "lidarXcm", "lidarYcm"],
+  ] as const;
+  for (const [label, frames, xKey, yKey] of trailDefinitions) {
+    for (let index = frames.length - 1; index >= Math.max(0, frames.length - 1000); index -= 1) {
+      const trailFrame = frames[index]!;
+      const fieldPoint = localToField({ x: trailFrame[xKey], y: trailFrame[yKey] }, coordinateContext);
+      if (Math.hypot(world.x - fieldPoint.x, world.y - fieldPoint.y) <= thresholdCm) {
+        return `${label} 轨迹\n相对 X ${trailFrame[xKey].toFixed(2)} cm · Y ${trailFrame[yKey].toFixed(2)} cm`;
+      }
     }
   }
   for (const rectangle of [...FIELD_RECTANGLES].reverse()) {
@@ -177,7 +207,7 @@ function featureAt(world: Point, view: MapViewport, rays: readonly Dt35Ray[], fr
   return null;
 }
 
-export function FieldMap({ frame, trails, initialFollow = true, initialLayers, onMousePositionChange }: FieldMapProps) {
+export function FieldMap({ frame, trails, coordinateContext, initialFollow = true, initialLayers, onMousePositionChange }: FieldMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; panX: number; panY: number } | null>(null);
   const raysRef = useRef<Dt35Ray[]>([]);
@@ -188,7 +218,12 @@ export function FieldMap({ frame, trails, initialFollow = true, initialLayers, o
   const [controlsOpen, setControlsOpen] = useState(true);
   const [layers, setLayers] = useState(() => layerDefaults(initialLayers));
   const [hover, setHover] = useState<{ x: number; y: number; world: Point; detail: string | null } | null>(null);
+  const previousSideRef = useRef(coordinateContext.side);
   const viewport = useMemo<MapViewport>(() => ({ ...size, ...camera, padding: 24 }), [size, camera]);
+  const fieldFrame = useMemo(
+    () => frame ? projectLocatorFrameToField(frame, coordinateContext) : null,
+    [frame, coordinateContext],
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -201,12 +236,17 @@ export function FieldMap({ frame, trails, initialFollow = true, initialLayers, o
   }, []);
 
   useEffect(() => {
-    if (!follow || !frame) return;
+    if (!follow || !fieldFrame) return;
+    if (previousSideRef.current !== coordinateContext.side) {
+      previousSideRef.current = coordinateContext.side;
+      setFollow(false);
+      return;
+    }
     setCamera((current) => {
-      const next = followPoint({ ...size, ...current, padding: 24 }, { x: frame.posXcm, y: frame.posYcm });
+      const next = followPoint({ ...size, ...current, padding: 24 }, { x: fieldFrame.posXcm, y: fieldFrame.posYcm });
       return { zoom: next.zoom, panX: next.panX, panY: next.panY };
     });
-  }, [follow, frame, size]);
+  }, [follow, fieldFrame, size, coordinateContext.side]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -229,23 +269,29 @@ export function FieldMap({ frame, trails, initialFollow = true, initialLayers, o
 
     if (layers.grid) {
       ctx.strokeStyle = "rgba(120,130,145,.34)"; ctx.lineWidth = 1;
-      for (let x = -600; x <= 600; x += 50) { const a = worldToCanvas({ x, y: FIELD_BOUNDS.minY }, viewport); const b = worldToCanvas({ x, y: FIELD_BOUNDS.maxY }, viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
-      for (let y = -600; y <= 600; y += 50) { const a = worldToCanvas({ x: FIELD_BOUNDS.minX, y }, viewport); const b = worldToCanvas({ x: FIELD_BOUNDS.maxX, y }, viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      const anchor = coordinateContext.fieldAnchorCm;
+      const minLocalX = FIELD_BOUNDS.minX - anchor.x;
+      const maxLocalX = FIELD_BOUNDS.maxX - anchor.x;
+      const minLocalY = FIELD_BOUNDS.minY - anchor.y;
+      const maxLocalY = FIELD_BOUNDS.maxY - anchor.y;
+      for (let x = Math.ceil(minLocalX / 50) * 50; x <= maxLocalX; x += 50) { const fieldX = anchor.x + x; const a = worldToCanvas({ x: fieldX, y: FIELD_BOUNDS.minY }, viewport); const b = worldToCanvas({ x: fieldX, y: FIELD_BOUNDS.maxY }, viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      for (let y = Math.ceil(minLocalY / 50) * 50; y <= maxLocalY; y += 50) { const fieldY = anchor.y + y; const a = worldToCanvas({ x: FIELD_BOUNDS.minX, y: fieldY }, viewport); const b = worldToCanvas({ x: FIELD_BOUNDS.maxX, y: fieldY }, viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
     }
     if (layers.axes) {
-      const x0 = worldToCanvas({ x: FIELD_BOUNDS.minX, y: 0 }, viewport); const x1 = worldToCanvas({ x: FIELD_BOUNDS.maxX, y: 0 }, viewport);
-      const y0 = worldToCanvas({ x: 0, y: FIELD_BOUNDS.minY }, viewport); const y1 = worldToCanvas({ x: 0, y: FIELD_BOUNDS.maxY }, viewport);
+      const anchor = coordinateContext.fieldAnchorCm;
+      const x0 = worldToCanvas({ x: FIELD_BOUNDS.minX, y: anchor.y }, viewport); const x1 = worldToCanvas({ x: FIELD_BOUNDS.maxX, y: anchor.y }, viewport);
+      const y0 = worldToCanvas({ x: anchor.x, y: FIELD_BOUNDS.minY }, viewport); const y1 = worldToCanvas({ x: anchor.x, y: FIELD_BOUNDS.maxY }, viewport);
       ctx.lineWidth = 1.5; ctx.strokeStyle = "#ff6b6b"; ctx.beginPath(); ctx.moveTo(x0.x, x0.y); ctx.lineTo(x1.x, x1.y); ctx.stroke();
       ctx.strokeStyle = "#4dabf7"; ctx.beginPath(); ctx.moveTo(y0.x, y0.y); ctx.lineTo(y1.x, y1.y); ctx.stroke();
     }
     if (layers.field_model) drawFieldModel(ctx, viewport);
-    if (layers.pos) drawPolyline(ctx, trails.final, viewport, "posXcm", "posYcm", "rgba(0,255,170,.82)");
-    if (layers.calib) drawPolyline(ctx, trails.calib, viewport, "calibXcm", "calibYcm", "rgba(255,192,0,.72)");
-    if (layers.lidar) drawPolyline(ctx, trails.lidar, viewport, "lidarXcm", "lidarYcm", "rgba(70,160,255,.76)", true);
+    if (layers.pos) drawPolyline(ctx, trails.final, viewport, "posXcm", "posYcm", "rgba(0,255,170,.82)", coordinateContext);
+    if (layers.calib) drawPolyline(ctx, trails.calib, viewport, "calibXcm", "calibYcm", "rgba(255,192,0,.72)", coordinateContext);
+    if (layers.lidar) drawPolyline(ctx, trails.lidar, viewport, "lidarXcm", "lidarYcm", "rgba(70,160,255,.76)", coordinateContext, true);
 
-    const rays = frame ? [
-      computeDt35Ray(frame, DT35_MOUNTS[0], frame.dt35_1mm, frame.dt35_1Valid),
-      computeDt35Ray(frame, DT35_MOUNTS[1], frame.dt35_2mm, frame.dt35_2Valid),
+    const rays = fieldFrame ? [
+      computeDt35Ray(fieldFrame, DT35_MOUNTS[0], fieldFrame.dt35_1mm, fieldFrame.dt35_1Valid),
+      computeDt35Ray(fieldFrame, DT35_MOUNTS[1], fieldFrame.dt35_2mm, fieldFrame.dt35_2Valid),
     ] : [];
     raysRef.current = rays;
     if (layers.dt35) {
@@ -264,12 +310,12 @@ export function FieldMap({ frame, trails, initialFollow = true, initialLayers, o
       }
     }
 
-    if (frame) {
-      const pose = { x: frame.posXcm, y: frame.posYcm, yawDeg: frame.posYawDeg };
+    if (fieldFrame) {
+      const pose = { x: fieldFrame.posXcm, y: fieldFrame.posYcm, yawDeg: fieldFrame.posYawDeg };
       const center = worldToCanvas(pose, viewport);
       const sizePx = 83 * scale;
       if (assets.robot) {
-        ctx.save(); ctx.translate(center.x, center.y); ctx.rotate((frame.posYawDeg - 90) * Math.PI / 180); ctx.globalAlpha = .94;
+        ctx.save(); ctx.translate(center.x, center.y); ctx.rotate((fieldFrame.posYawDeg - 90) * Math.PI / 180); ctx.globalAlpha = .94;
         ctx.drawImage(assets.robot, -sizePx / 2, -sizePx / 2, sizePx, sizePx); ctx.restore();
       }
       const corners = [[-41.5, -41.5], [41.5, -41.5], [41.5, 41.5], [-41.5, 41.5]] as const;
@@ -282,7 +328,7 @@ export function FieldMap({ frame, trails, initialFollow = true, initialLayers, o
       ctx.fillStyle = "#fff"; ctx.strokeStyle = "#10151c"; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(center.x, center.y, 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     }
     ctx.strokeStyle = "#d0d7de"; ctx.lineWidth = 1.5; ctx.strokeRect(topLeft.x, topLeft.y, FIELD_WIDTH_CM * scale, FIELD_HEIGHT_CM * scale);
-  }, [assets.background, assets.robot, frame, trails, layers, viewport, size.width, size.height]);
+  }, [assets.background, assets.robot, coordinateContext, fieldFrame, trails, layers, viewport, size.width, size.height]);
 
   const pointerPoint = (event: { clientX: number; clientY: number }): Point => {
     const rect = canvasRef.current!.getBoundingClientRect();
@@ -305,9 +351,10 @@ export function FieldMap({ frame, trails, initialFollow = true, initialLayers, o
       setCamera((current) => ({ ...current, panX: drag.panX + point.x - drag.x, panY: drag.panY + point.y - drag.y }));
       return;
     }
-    const world = canvasToWorld(point, viewport);
-    onMousePositionChange?.(world);
-    setHover({ ...point, world, detail: featureAt(world, viewport, layers.dt35 ? raysRef.current : [], frame) });
+    const fieldPoint = canvasToWorld(point, viewport);
+    const localPoint = fieldToLocal(fieldPoint, coordinateContext);
+    onMousePositionChange?.(localPoint);
+    setHover({ ...point, world: localPoint, detail: featureAt(fieldPoint, viewport, layers.dt35 ? raysRef.current : [], fieldFrame, frame, trails, coordinateContext) });
   };
   const endPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
@@ -315,15 +362,15 @@ export function FieldMap({ frame, trails, initialFollow = true, initialLayers, o
   };
   const resetView = () => {
     const base = { zoom: 1, panX: 0, panY: 0 };
-    if (follow && frame) {
-      const next = followPoint({ ...viewport, ...base }, { x: frame.posXcm, y: frame.posYcm });
+    if (follow && fieldFrame) {
+      const next = followPoint({ ...viewport, ...base }, { x: fieldFrame.posXcm, y: fieldFrame.posYcm });
       setCamera({ zoom: 1, panX: next.panX, panY: next.panY });
     } else setCamera(base);
   };
 
   return <div className="field-map" style={{ position: "relative", width: "100%", height: "100%", minHeight: 430, overflow: "hidden", background: "#10151c" }}>
     <canvas
-      className="field-canvas" ref={canvasRef} aria-label="R1 定位场地图"
+      className="field-canvas" ref={canvasRef} aria-label="R1 定位场地图" data-side={coordinateContext.side}
       onWheel={onWheel} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
       onPointerUp={endPointer} onPointerCancel={endPointer} onPointerLeave={() => { if (!dragRef.current) setHover(null); }}
       style={{ cursor: dragRef.current ? "grabbing" : "grab", touchAction: "none" }}

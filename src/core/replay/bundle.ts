@@ -1,7 +1,8 @@
 import { unzipSync } from "fflate";
 
+import { parseLocatorCoordinateMetadata } from "../locator";
 import { parseReplayText } from "./parser";
-import type { ParseReplayOptions, ReplayBundle, ReplayTrack } from "./types";
+import type { ParseReplayOptions, ReplayBundle, ReplayCoordinateSpace, ReplayTrack } from "./types";
 
 const decoder = new TextDecoder();
 const REPLAY_ARTIFACTS = new Set([
@@ -22,16 +23,50 @@ function basename(path: string): string {
   return path.replaceAll("\\", "/").split("/").at(-1) ?? path;
 }
 
-function trackFromText(name: string, text: string, options: ParseReplayOptions): ReplayTrack {
-  return { name, records: parseReplayText(text, options) };
+function explicitCoordinateSpace(metadata: unknown): ReplayCoordinateSpace | undefined {
+  if (!metadata || typeof metadata !== "object") return undefined;
+  const root = metadata as Record<string, unknown>;
+  if ("locatorCoordinates" in root) {
+    const locatorCoordinates = root.locatorCoordinates;
+    if (parseLocatorCoordinateMetadata(locatorCoordinates)) return "start-relative";
+    if (locatorCoordinates && typeof locatorCoordinates === "object" && (locatorCoordinates as Record<string, unknown>).coordinateSpace === "field") return "field";
+    return "unknown";
+  }
+  if ("renderContext" in root) return explicitCoordinateSpace(root.renderContext);
+  if (parseLocatorCoordinateMetadata(metadata)) return "start-relative";
+  if (!("coordinateSpace" in root)) return undefined;
+  return root.coordinateSpace === "field" ? "field" : "unknown";
 }
 
-function decodeJson(data: Uint8Array | undefined): unknown {
-  if (!data) return undefined;
+function coordinateSpaceForTrack(
+  name: string,
+  metadata: unknown,
+  metadataState: "absent" | "valid" | "invalid",
+): ReplayCoordinateSpace {
+  if (name === "raw_serial.log" || name === "raw_frames.csv") return "start-relative";
+  if (name === "display_frames.csv") {
+    if (metadataState === "invalid") return "unknown";
+    // Desktop bundles predate coordinate metadata and baked display values into
+    // field coordinates. An explicit but unsupported value stays ambiguous.
+    return explicitCoordinateSpace(metadata) ?? "field";
+  }
+  return "unknown";
+}
+
+function trackFromText(
+  name: string,
+  text: string,
+  options: ParseReplayOptions,
+  coordinateSpace: ReplayCoordinateSpace,
+): ReplayTrack {
+  return { name, records: parseReplayText(text, options), coordinateSpace };
+}
+
+function decodeJson(data: Uint8Array): { valid: true; value: unknown } | { valid: false } {
   try {
-    return JSON.parse(decoder.decode(data));
+    return { valid: true, value: JSON.parse(decoder.decode(data)) };
   } catch {
-    return undefined;
+    return { valid: false };
   }
 }
 
@@ -40,18 +75,32 @@ export function loadReplayZip(
   options: LoadReplayOptions = {},
 ): ReplayBundle {
   const entries = unzipSync(bytes);
-  const tracks: ReplayTrack[] = [];
+  const replayEntries: Array<{ name: string; data: Uint8Array }> = [];
   let metadata: unknown;
+  let metadataState: "absent" | "valid" | "invalid" = "absent";
+  const metadataEntry = Object.entries(entries).find(([path]) => basename(path) === "metadata.json")
+    ?? Object.entries(entries).find(([path]) => basename(path) === "session.json");
+  if (metadataEntry) {
+    const decoded = decodeJson(metadataEntry[1]);
+    metadataState = decoded.valid ? "valid" : "invalid";
+    if (decoded.valid) metadata = decoded.value;
+  }
   for (const [path, data] of Object.entries(entries)) {
     const name = basename(path);
     if (name === "session.json" || name === "metadata.json") {
-      metadata ??= decodeJson(data);
       continue;
     }
-    if (!REPLAY_ARTIFACTS.has(name)) continue;
-    const format = name.endsWith(".csv") ? "csv" : "raw";
-    tracks.push(trackFromText(name, decoder.decode(data), { ...options, format }));
+    if (REPLAY_ARTIFACTS.has(name)) replayEntries.push({ name, data });
   }
+  const tracks = replayEntries.map(({ name, data }) => {
+    const format = name.endsWith(".csv") ? "csv" : "raw";
+    return trackFromText(
+      name,
+      decoder.decode(data),
+      { ...options, format },
+      coordinateSpaceForTrack(name, metadata, metadataState),
+    );
+  });
   if (tracks.length === 0) throw new Error("ZIP does not contain a supported R1 replay artifact");
   return { name: options.name ?? "r1-session.zip", tracks, metadata };
 }
@@ -70,7 +119,12 @@ export function loadReplayBytes(
       : options.format;
   return {
     name,
-    tracks: [trackFromText(name, decoder.decode(bytes), { ...options, format })],
+    tracks: [trackFromText(
+      name,
+      decoder.decode(bytes),
+      { ...options, format },
+      coordinateSpaceForTrack(basename(name).toLowerCase(), undefined, "absent"),
+    )],
   };
 }
 

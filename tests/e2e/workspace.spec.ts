@@ -59,6 +59,31 @@ async function installMockSerial(page: Page) {
   });
 }
 
+async function installMapStrokeAudit(page: Page) {
+  await page.addInitScript(() => {
+    const proto = CanvasRenderingContext2D.prototype;
+    const beginPath = proto.beginPath;
+    const lineTo = proto.lineTo;
+    const stroke = proto.stroke;
+    const pathLineCounts = new WeakMap<CanvasRenderingContext2D, number>();
+    const latestByStyle: Record<string, number> = {};
+
+    proto.beginPath = function beginPathWithAudit() {
+      pathLineCounts.set(this, 0);
+      return beginPath.call(this);
+    };
+    proto.lineTo = function lineToWithAudit(x: number, y: number) {
+      pathLineCounts.set(this, (pathLineCounts.get(this) ?? 0) + 1);
+      return lineTo.call(this, x, y);
+    };
+    proto.stroke = function strokeWithAudit(path?: Path2D) {
+      latestByStyle[String(this.strokeStyle)] = pathLineCounts.get(this) ?? 0;
+      return Reflect.apply(stroke, this, path === undefined ? [] : [path]);
+    };
+    Object.defineProperty(window, "__r1MapStrokeAudit", { configurable: true, value: latestByStyle });
+  });
+}
+
 test("uses the frozen centered field and +Y forward body convention", () => {
   expect(FIELD_BOUNDS).toEqual({ minX: -607.5, maxX: 607.5, minY: -605, maxY: 605 });
   expect(bodyToWorld({ x: 0, y: 0, yawDeg: 0 }, 0, 10)).toEqual({ x: 0, y: 10 });
@@ -200,7 +225,83 @@ test("loads the frozen map assets and draws the robot demo", async ({ page }) =>
   await expect.poll(() => responses.some((url) => url.endsWith("r1_chassis_830mm_texture_1024.png"))).toBeTruthy();
   const mapInfo = page.getByRole("button", { name: "地图图例与坐标说明" });
   await mapInfo.hover();
-  await expect(mapInfo.locator("xpath=..", { hasText: "Final 是融合后定位" })).toBeVisible();
+  await expect(mapInfo.locator("xpath=..", { hasText: "Final、Calib、LiDAR 均显示机器人初始点相对轨迹" })).toBeVisible();
+});
+
+test("keeps locator values and trail samples start-relative while switching red and blue anchors", async ({ page }) => {
+  await disableWebSerial(page);
+  await installMapStrokeAudit(page);
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.goto("/");
+  await page.getByRole("button", { name: /定位地图/ }).click();
+
+  const workspace = page.getByTestId("locator-workspace");
+  const red = workspace.getByRole("button", { name: "红方", exact: true });
+  const blue = workspace.getByRole("button", { name: "蓝方", exact: true });
+  const canvas = workspace.locator(".field-canvas");
+  await expect(red).toHaveAttribute("aria-pressed", "true");
+  await expect(blue).toHaveAttribute("aria-pressed", "false");
+  await expect(canvas).toHaveAttribute("data-side", "red");
+
+  const raw = [
+    "0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,0.000,850.000,1180.000,110",
+    "10.000,5.000,3.000,9.000,4.000,2.000,8.000,3.000,2.500,860.000,1170.000,110",
+    "20.000,10.000,6.000,18.000,9.000,5.000,17.000,8.000,5.500,870.000,1160.000,110",
+  ].join("\n");
+  await workspace.locator("input[type=file]").setInputFiles({
+    name: "raw_serial.log",
+    mimeType: "text/plain",
+    buffer: Buffer.from(raw, "utf8"),
+  });
+  const step = workspace.getByRole("button", { name: "单步", exact: true });
+  await step.click();
+  await step.click();
+  await step.click();
+
+  const poseValues = workspace.locator(".pose-primary strong");
+  await expect(poseValues.nth(0)).toHaveText("20.00");
+  await expect(poseValues.nth(1)).toHaveText("10.00");
+  await expect(poseValues.nth(2)).toHaveText("6.00");
+  const redPose = await poseValues.allTextContents();
+  const redTrailSegments = await page.evaluate(() => {
+    const audit = (window as Window & { __r1MapStrokeAudit?: Record<string, number> }).__r1MapStrokeAudit;
+    return audit?.["rgba(0, 255, 170, 0.82)"] ?? -1;
+  });
+  expect(redTrailSegments).toBe(2);
+
+  await blue.click();
+  await expect(red).toHaveAttribute("aria-pressed", "false");
+  await expect(blue).toHaveAttribute("aria-pressed", "true");
+  await expect(canvas).toHaveAttribute("data-side", "blue");
+  await expect(poseValues).toHaveText(redPose);
+  const blueTrailSegments = await page.evaluate(() => {
+    const audit = (window as Window & { __r1MapStrokeAudit?: Record<string, number> }).__r1MapStrokeAudit;
+    return audit?.["rgba(0, 255, 170, 0.82)"] ?? -1;
+  });
+  expect(blueTrailSegments).toBe(redTrailSegments);
+
+  await page.reload();
+  await page.getByRole("button", { name: /定位地图/ }).click();
+  await expect(page.getByTestId("locator-workspace").getByRole("button", { name: "红方", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("locator-workspace").locator(".field-canvas")).toHaveAttribute("data-side", "red");
+});
+
+test("starts locator demo near local zero and locks the side selector while recording", async ({ page }) => {
+  await disableWebSerial(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: /定位地图/ }).click();
+  const workspace = page.getByTestId("locator-workspace");
+  await page.clock.install({ time: new Date("2026-07-12T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-07-12T12:00:00Z"));
+  await workspace.getByRole("button", { name: "演示轨迹", exact: true }).click();
+  const poseValues = workspace.locator(".pose-primary strong");
+  await expect(poseValues.nth(0)).toHaveText("0.00");
+  await expect(poseValues.nth(1)).toHaveText("0.00");
+
+  await workspace.getByRole("button", { name: "开始本地录制", exact: true }).click();
+  await expect(workspace.getByRole("button", { name: "红方", exact: true })).toBeDisabled();
+  await expect(workspace.getByRole("button", { name: "蓝方", exact: true })).toBeDisabled();
+  await expect(workspace.getByText("录制中已锁定阵营", { exact: true })).toBeVisible();
 });
 
 test("locator layout has no page-level horizontal overflow at supported breakpoints", async ({ page }) => {

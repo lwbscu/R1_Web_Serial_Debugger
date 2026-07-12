@@ -1,3 +1,5 @@
+import type { LocatorCoordinateContext } from "../locator";
+
 export type RecordingKind = "communication" | "locator";
 
 export type CommunicationArtifact =
@@ -27,6 +29,7 @@ export interface SessionManifest {
     locator?: string;
   };
   parserVersions?: Record<string, string>;
+  locatorCoordinates?: LocatorCoordinateContext;
   notes?: string;
 }
 

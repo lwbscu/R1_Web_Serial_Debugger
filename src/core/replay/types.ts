@@ -1,4 +1,5 @@
 export type ReplayFormat = "auto" | "raw" | "csv";
+export type ReplayCoordinateSpace = "start-relative" | "field" | "unknown";
 
 export interface ReplayRecord {
   lineNumber: number;
@@ -23,6 +24,9 @@ export interface ParseReplayOptions {
 export interface ReplayTrack {
   name: string;
   records: ReplayRecord[];
+  /** Coordinate interpretation of locator records. Non-locator or ambiguous
+   * tracks are explicitly unknown instead of being guessed. */
+  coordinateSpace: ReplayCoordinateSpace;
 }
 
 export interface ReplayBundle {

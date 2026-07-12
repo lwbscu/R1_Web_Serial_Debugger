@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { downloadVolume, exportSessionVolumes, listRecoverableSessions, OpfsFileStore, SessionRecorder, type ExportSessionProgress, type RecordingArtifact, type RecordingKind, type RecoverableSession } from "../../core/storage";
+import { downloadVolume, exportSessionVolumes, listRecoverableSessions, OpfsFileStore, SessionRecorder, type ExportSessionProgress, type RecordingArtifact, type RecordingKind, type RecoverableSession, type SessionManifest } from "../../core/storage";
 import { BUILD_INFO } from "../../shared/buildInfo";
 import { sessionId } from "../../shared/format";
 
@@ -20,6 +20,8 @@ export interface RecordingDownloadProgress {
   label: string;
   detail: string;
 }
+
+export type RecorderManifestExtras = Pick<SessionManifest, "locatorCoordinates" | "notes">;
 
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
@@ -83,14 +85,19 @@ export function useRecorder(kind: RecordingKind) {
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }, [kind]);
   useEffect(() => { void refresh(); }, [refresh]);
-  const start = useCallback(async () => {
+  const start = useCallback(async (extras: RecorderManifestExtras = {}) => {
     if (exportingRef.current) return;
     try {
+      if (kind !== "locator" && extras.locatorCoordinates !== undefined) {
+        throw new Error("locatorCoordinates may only be recorded in a locator session");
+      }
       const store = storeRef.current ??= new OpfsFileStore();
       recorderRef.current = await SessionRecorder.create(store, {
         schemaVersion: 1, sessionId: sessionId(kind), kind, startedAt: new Date().toISOString(),
         sourceCommits: { remote: BUILD_INFO.remoteSource, locator: BUILD_INFO.locatorSource },
         parserVersions: BUILD_INFO.parsers,
+        ...(extras.notes === undefined ? {} : { notes: extras.notes }),
+        ...(extras.locatorCoordinates === undefined ? {} : { locatorCoordinates: extras.locatorCoordinates }),
       });
       setActive(true); setError(null); setDownloadProgress(null); await refresh();
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
