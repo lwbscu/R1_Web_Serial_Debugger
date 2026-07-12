@@ -62,6 +62,7 @@ async function updateExportProgress(
   progress: ExportSessionProgress,
   setDownloadProgress: (value: RecordingDownloadProgress) => void,
 ): Promise<void> {
+  if (progress.phase === "done") return;
   setDownloadProgress(exportProgressState(progress));
   if (progress.phase !== "reading") await waitForPaint();
 }
