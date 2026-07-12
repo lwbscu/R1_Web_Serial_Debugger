@@ -14,7 +14,7 @@ async function installMockSerial(page: Page) {
       private stop: (() => void) | null = null;
 
       constructor(
-        private readonly line: string,
+        private readonly lines: string | string[],
         private readonly info: { usbVendorId: number; usbProductId: number },
       ) {}
 
@@ -22,11 +22,15 @@ async function installMockSerial(page: Page) {
 
       async open() {
         if (this.readable) throw new DOMException("port already open", "InvalidStateError");
-        const line = this.line;
+        const lines = Array.isArray(this.lines) ? this.lines : [this.lines];
+        let index = 0;
         let timer = 0;
         this.readable = new ReadableStream<Uint8Array>({
           start(controller) {
-            const emit = () => controller.enqueue(new TextEncoder().encode(line));
+            const emit = () => {
+              controller.enqueue(new TextEncoder().encode(lines[index % lines.length]!));
+              index += 1;
+            };
             emit();
             timer = window.setInterval(emit, 20);
           },
@@ -42,10 +46,36 @@ async function installMockSerial(page: Page) {
       }
     }
 
-    const cdbg = ["CDBG", ...Array.from({ length: 29 }, (_, index) => String(index + 1))].join(",") + "\n";
+    const cdbgV3 = (() => {
+      const prefix = Array.from({ length: 87 }, (_, index) => String(index + 1));
+      const extension = Array.from({ length: 61 }, () => "0");
+      extension[18] = "0"; // taskFrameAgeMs
+      extension[19] = "1"; // taskFrameCount
+      extension[39] = "1"; // actionEnqueueOkCount
+      extension[41] = "1"; // actionDequeueCount
+      extension[42] = "0"; // actionDequeueAgeMs
+      extension[43] = "1"; // mechTxStartCount
+      extension[44] = "1"; // mechTxOkCount
+      extension[47] = "3"; // mechTxLastDurationMs
+      extension[48] = "0"; // mechTxLastStatus
+      extension[52] = "1"; // mechFeedbackOkCount
+      extension[55] = "0"; // mechFeedbackAgeMs
+      extension[59] = "1"; // uart1RxByteCount
+      extension[60] = "0"; // uart1RxByteAgeMs
+      return ["CDBG", "3", "151", ...prefix, ...extension].join(",") + "\n";
+    })();
     const ports = [
-      new MockSerialPort("RDBG,100,7,T,76,0,32,1,20,4,1,1,10,0,2,88,1,none\n", { usbVendorId: 0x0483, usbProductId: 0x5740 }),
-      new MockSerialPort(cdbg, { usbVendorId: 0x1a86, usbProductId: 0x7523 }),
+      new MockSerialPort([
+        "RDBG,100,7,ACT,76,1,6,1,20,4,1,1,10,0,2,88,1,none\n",
+        "RDBG_TX,1,120,8,ACT,5,5B02010101,1,6,875C02010101,0,1,2,1,1,1\n",
+      ], { usbVendorId: 0x0483, usbProductId: 0x5740 }),
+      new MockSerialPort([
+        cdbgV3,
+        "CEVT,MECH_CMD,130,1,2,1,1,1,1\n",
+        "CEVT,MECH_CMD,140,3,2,1,1,1,0\n",
+        "CEVT,MECH_TX,150,2,2,1,1,1,0,3\n",
+        "CEVT,MECH_FB,160,1,2,1,1,1,5,5\n",
+      ], { usbVendorId: 0x1a86, usbProductId: 0x7523 }),
       new MockSerialPort("1,2,3,4,5,6,7,8,9,190,5221,114\n", { usbVendorId: 0x10c4, usbProductId: 0xea60 }),
     ];
     let next = 0;
@@ -335,8 +365,8 @@ test("starts locator demo near local zero and locks the side selector while reco
   await page.goto("/");
   await page.getByRole("button", { name: /定位地图/ }).click();
   const workspace = page.getByTestId("locator-workspace");
-  await page.clock.install({ time: new Date("2026-07-12T12:00:00Z") });
-  await page.clock.pauseAt(new Date("2026-07-12T12:00:00Z"));
+  await page.clock.install({ time: new Date("2030-07-12T12:00:00Z") });
+  await page.clock.pauseAt(new Date("2030-07-12T12:00:00Z"));
   await workspace.getByRole("button", { name: "演示轨迹", exact: true }).click();
   const poseValues = workspace.locator(".pose-primary strong");
   await expect(poseValues.nth(0)).toHaveText("0.00");
@@ -398,6 +428,19 @@ test("read-only probes three authorized ports and auto-binds unique roles", asyn
   await expect(remotePanel).toContainText("遥控器串口正在接收");
   await expect(remotePanel).toContainText("数据正常");
   await expect(remotePanel.getByRole("button", { name: "断开" })).toBeVisible();
+  const remoteWorkspace = page.getByTestId("remote-control-workspace");
+  await expect(remoteWorkspace.locator(".remote-hero")).toContainText("当前动作指令");
+  await expect(remoteWorkspace.locator(".remote-hero strong")).toContainText("ACT");
+  await expect(remoteWorkspace.locator(".remote-hero")).toContainText("echo 匹配");
+  await expect(remoteWorkspace.locator(".remote-args")).toContainText("state");
+  await expect(remoteWorkspace.locator(".remote-args")).toContainText("enabled");
+  await expect(remoteWorkspace.locator(".effect-panel")).toContainText("底盘接收 ACT");
+  await expect(remoteWorkspace.locator(".effect-panel")).toContainText("ACT 队列");
+  await expect(remoteWorkspace.locator(".effect-panel")).toContainText("USART1 发给机构");
+  await expect(remoteWorkspace.locator(".effect-panel")).toContainText("MECH_TX done");
+  await expect(remoteWorkspace.locator(".effect-panel")).toContainText("机构有效反馈");
+  await expect(remoteWorkspace.locator(".remote-context-grid")).toContainText("v3/151");
+  await expect(remoteWorkspace.locator(".remote-tx-row.type-act").first()).toContainText("state=2 stage=1 exec=1 enabled=1");
   await page.getByRole("button", { name: /定位地图/ }).click();
   await expect(page.getByRole("button", { name: "演示轨迹" })).toBeVisible();
   await expect(page.locator(".workspace-host.active").getByText("正在接收")).toHaveCount(1);

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { PortSnapshot } from "../../core/serial";
-import type { SourceRole } from "../../core/types";
+import type { ProtocolEvent, SourceRole } from "../../core/types";
 import type { ChassisFrame, RemoteFrame, RemoteTxEvent } from "../../protocols";
 import type { DiagnosticEvent } from "../communication/eventDetector";
 
@@ -23,6 +23,7 @@ export interface RemoteDebugState {
   latestTx: RemoteTxEvent | null;
   ports: Record<SourceRole, RemoteDebugPortState>;
   txEvents: RemoteTxEvent[];
+  chassisEvents: ProtocolEvent[];
   firmwareEvents: DiagnosticEvent[];
   parseErrors: DiagnosticEvent[];
   logs: RemoteDebugLogEntry[];
@@ -51,6 +52,7 @@ const INITIAL_STATE: RemoteDebugState = {
     locator: EMPTY_PORT_STATE,
   },
   txEvents: [],
+  chassisEvents: [],
   firmwareEvents: [],
   parseErrors: [],
   logs: [],
@@ -82,6 +84,10 @@ class RemoteDebugStore {
       latestTx: event,
       txEvents: [...this.state.txEvents, event].slice(-200),
     });
+  }
+
+  publishChassisEvent(event: ProtocolEvent): void {
+    this.patch({ chassisEvents: [...this.state.chassisEvents, event].slice(-300) });
   }
 
   publishPort(role: SourceRole, supported: boolean, snapshot: PortSnapshot): void {
@@ -148,7 +154,7 @@ class RemoteDebugStore {
   }
 
   clearChassis(): void {
-    this.patch({ latestChassis: null });
+    this.patch({ latestChassis: null, chassisEvents: [] });
   }
 
   private patch(next: Partial<Omit<RemoteDebugState, "revision">>): void {

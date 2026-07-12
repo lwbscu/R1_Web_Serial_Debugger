@@ -3,7 +3,7 @@ import type { PortSnapshot } from "../../core/serial";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoRemoteFrame, demoRemoteTxEvent } from "../demo/demoData";
 import { requestOpenSerialDiscovery } from "../serial/discoveryDialogStore";
-import { buildRemoteCommandView, formatHexBytes, type RemoteCommandStatus } from "./model";
+import { buildRemoteCommandView, formatCommandArgs, formatHexBytes, type RemoteCommandStatus } from "./model";
 import { remoteDebugStore, type RemoteDebugPortState, useRemoteDebugState } from "./remoteDebugStore";
 
 function statusLabel(status: RemoteCommandStatus): string {
@@ -98,6 +98,13 @@ function ByteStrip({ hex }: { hex: string }) {
   return <div className="byte-strip" aria-label="协议字节数组">{hex.split(" ").map((byte, index) => <code key={`${byte}-${index}`}>{byte}</code>)}</div>;
 }
 
+function packetRowClass(packetType: string, latest: boolean): string {
+  const typeClass = packetType === "ACT" || packetType === "MODE" || packetType === "VMODE" || packetType === "KEY"
+    ? `type-${packetType.toLowerCase()}`
+    : "type-other";
+  return `remote-tx-row ${typeClass}${latest ? " latest" : ""}`;
+}
+
 export interface RemoteControlWorkspaceProps {
   active?: boolean;
   onOpenCommunication?: () => void;
@@ -110,8 +117,8 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
   const [paused, setPaused] = useState(false);
   const [frozenEvents, setFrozenEvents] = useState(state.txEvents);
   const view = useMemo(
-    () => buildRemoteCommandView(state.latestRemote, state.latestChassis, state.latestTx, nowMs),
-    [nowMs, state.latestChassis, state.latestRemote, state.latestTx],
+    () => buildRemoteCommandView(state.latestRemote, state.latestChassis, state.latestTx, nowMs, state.chassisEvents),
+    [nowMs, state.chassisEvents, state.latestChassis, state.latestRemote, state.latestTx],
   );
 
   useEffect(() => {
@@ -201,7 +208,7 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
       <div className="remote-workspace-main">
         <section className={`remote-hero panel ${view.primaryStatus}`}>
           <div>
-            <span>当前命令</span>
+            <span>{view.headlineLabel}</span>
             <strong>{view.title}</strong>
             <p>{view.subtitle}</p>
           </div>
@@ -252,14 +259,14 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
             <div className="panel-title"><strong>最近遥控器发包</strong><small>{shownEvents.length} 条</small></div>
             <div className="toolbar"><button className={paused ? "selected" : "secondary"} onClick={() => { if (!paused) setFrozenEvents([...state.txEvents]); setPaused((value) => !value); }}>{paused ? "继续滚动" : "暂停滚动"}</button></div>
           </div>
-          {shownEvents.length === 0 ? <p className="empty">尚无 RDBG_TX。烧录新遥控器固件，或点击“演示遥控器窗口”。</p> : <div className="remote-tx-table">
+          {shownEvents.length === 0 ? <p className="empty">尚无 RDBG_TX。当前固件未输出 RDBG_TX；请烧录本次交付的遥控器完整 SHA 后再采集，或点击“演示遥控器窗口”。</p> : <div className="remote-tx-table">
             <div className="remote-tx-head"><span>PC time</span><span>type</span><span>tx</span><span>ack</span><span>args</span></div>
-            {shownEvents.slice(-120).reverse().map((event) => <div className="remote-tx-row" key={`${event.observedAtMs}-${event.seq}`}>
+            {shownEvents.slice(-120).reverse().map((event, index) => <div className={packetRowClass(event.packetType, index === 0)} key={`${event.observedAtMs}-${event.seq}`}>
               <time>{displayTime(event.observedAtMs)}</time>
               <strong>{event.packetType}</strong>
               <code>{formatHexBytes(event.txBytes)}</code>
               <code>{formatHexBytes(event.ackBytes)}</code>
-              <span>{event.args.join(", ")}</span>
+              <span>{formatCommandArgs(event)}</span>
             </div>)}
           </div>}
           {state.parseErrors.length > 0 && <p className="warning">最近解析错误：{state.parseErrors.at(-1)?.detail}</p>}

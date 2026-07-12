@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ProtocolEvent } from "../../src/core/types";
 import type { ChassisFrame, RemoteFrame, RemoteTxEvent } from "../../src/protocols";
 import { buildRemoteCommandView } from "../../src/features/remoteControl/model";
 
@@ -26,13 +27,38 @@ const chassis = (overrides: Record<string, string | number | null> = {}): Chassi
   ...overrides,
 });
 
+const event = (eventKind: string, fields: readonly unknown[], observedAtMs = 1300): ProtocolEvent => ({
+  source: "chassis",
+  eventKind,
+  observedAtMs,
+  sourceTimeMs: observedAtMs - 1000,
+  fields,
+  rawLine: `CEVT,${eventKind},${observedAtMs},${fields.join(",")}`,
+});
+
+const actEvents = (): ProtocolEvent[] => [
+  event("MECH_CMD", [1, 2, 1, 1, 1, 1], 1260),
+  event("MECH_CMD", [3, 2, 1, 1, 1, 0], 1280),
+  event("MECH_TX", [2, 2, 1, 1, 1, 0, 3], 1300),
+  event("MECH_FB", [1, 2, 1, 1, 1, 5, 5], 1320),
+];
+
 describe("remote command view model", () => {
   it("highlights a successful ACT through ACK, chassis, queue, USART1, and feedback", () => {
-    const view = buildRemoteCommandView(remote(), chassis(), tx(), 1500);
+    const view = buildRemoteCommandView(remote(), chassis(), tx(), 1500, actEvents());
     expect(view.primaryStatus).toBe("normal");
+    expect(view.headlineLabel).toBe("当前动作指令");
     expect(view.title).toContain("ACT");
     expect(view.txHex).toContain("5B");
-    expect(view.steps.map((step) => step.key)).toEqual(["remote_tx", "nrf_ack", "chassis_receive", "command_apply", "mechanism_feedback"]);
+    expect(view.ackResult).toContain("echo 匹配");
+    expect(view.args).toEqual([
+      { label: "state", value: "2" },
+      { label: "stage", value: "1" },
+      { label: "exec", value: "1" },
+      { label: "enabled", value: "1" },
+    ]);
+    expect(view.steps.map((step) => step.key)).toEqual(["remote_tx", "nrf_ack", "chassis_receive", "command_apply", "usart1_tx", "mechanism_feedback"]);
+    expect(view.steps.find((step) => step.key === "usart1_tx")?.detail).toContain("MECH_TX done");
   });
 
   it("marks TX failure as an error even if old RDBG is present", () => {
@@ -41,10 +67,17 @@ describe("remote command view model", () => {
     expect(view.steps[0]).toMatchObject({ key: "remote_tx", status: "error" });
   });
 
+  it("warns when ACT ACK echo does not match the transmitted args", () => {
+    const view = buildRemoteCommandView(remote(), chassis(), tx({ ackBytes: [0x87, 0x5C, 9, 1, 1, 1], ackHex: "875C09010101" }), 1500, actEvents());
+    expect(view.primaryStatus).toBe("warn");
+    expect(view.ackResult).toContain("echo 不匹配");
+    expect(view.steps.find((step) => step.key === "nrf_ack")).toMatchObject({ status: "warn" });
+  });
+
   it("degrades when the current firmware only provides legacy RDBG", () => {
     const view = buildRemoteCommandView(remote({ packetType: "ADC" }), null, null, 1500);
     expect(view.primaryStatus).toBe("warn");
-    expect(view.subtitle).toContain("尚未看到 RDBG_TX");
+    expect(view.subtitle).toContain("当前固件未输出 RDBG_TX");
     expect(view.steps.find((step) => step.key === "chassis_receive")?.status).toBe("unknown");
   });
 

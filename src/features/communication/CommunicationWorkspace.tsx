@@ -125,6 +125,7 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
         }
         return;
       }
+      if (role === "chassis") remoteDebugStore.publishChassisEvent(received.outcome.event);
       const displayKind = received.outcome.event.rawLine.startsWith("CEVT,") ? `CEVT_${firmwareKind}` : firmwareKind;
       const event: DiagnosticEvent = { observedAtMs: at, kind: displayKind, severity: firmwareEventSeverity(firmwareKind), detail: received.outcome.event.fields.map(String).join(", ") || received.outcome.event.rawLine };
       remoteDebugStore.publishFirmwareEvent(event);

@@ -325,6 +325,13 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .remote-tx-row { color: #9db1c0; border-bottom: 1px solid rgba(31, 49, 62, .48); }
 .remote-tx-row strong { color: #65e0ba; }
 .remote-tx-row code, .remote-tx-row span { overflow: hidden; font: 9px ui-monospace, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.remote-tx-row.latest { background: rgba(255, 255, 255, .025); }
+.remote-tx-row.type-act { border-left: 3px solid #ffcc66; background: rgba(255, 204, 102, .06); }
+.remote-tx-row.type-act strong { color: #ffd88a; }
+.remote-tx-row.type-mode, .remote-tx-row.type-vmode { border-left: 3px solid #6aa9ff; background: rgba(106, 169, 255, .055); }
+.remote-tx-row.type-mode strong, .remote-tx-row.type-vmode strong { color: #9ec6ff; }
+.remote-tx-row.type-key { border-left: 3px solid #d38dff; background: rgba(211, 141, 255, .055); }
+.remote-tx-row.type-key strong { color: #e0b3ff; }
 .remote-workspace-layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
 .remote-workspace-main { min-width: 0; }
 .remote-serial-sidebar { position: sticky; top: 24px; border-top: 3px solid var(--unknown); }
