@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import type { PortSnapshot } from "../../core/serial";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoRemoteFrame, demoRemoteTxEvent } from "../demo/demoData";
 import { buildRemoteCommandView, formatHexBytes, type RemoteCommandStatus } from "./model";
-import { remoteDebugStore, useRemoteDebugState } from "./remoteDebugStore";
+import { remoteDebugStore, type RemoteDebugPortState, useRemoteDebugState } from "./remoteDebugStore";
 
 function statusLabel(status: RemoteCommandStatus): string {
   return { normal: "正常", warn: "注意", error: "异常", unknown: "未知" }[status];
@@ -14,6 +15,81 @@ function statusClass(status: RemoteCommandStatus): string {
 
 function displayTime(at: number): string {
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hour12: false }).format(at);
+}
+
+const LIFECYCLE_TEXT: Record<PortSnapshot["lifecycle"], string> = {
+  idle: "待机",
+  requesting: "等待授权",
+  opening: "正在打开",
+  reading: "正在接收",
+  closing: "正在关闭",
+  error: "连接异常",
+};
+
+const HEALTH_TEXT: Record<PortSnapshot["health"], string> = {
+  "no-data": "尚无数据",
+  "bytes-only": "有字节",
+  valid: "数据正常",
+  stale: "数据过期",
+  "wrong-role": "疑似错口",
+};
+
+function hex(value: number | undefined): string {
+  return value === undefined ? "----" : value.toString(16).toUpperCase().padStart(4, "0");
+}
+
+function deviceLabel(snapshot: PortSnapshot | null): string {
+  if (!snapshot) return "等待通信诊断页初始化";
+  if (snapshot.portInfo) return `VID ${hex(snapshot.portInfo.usbVendorId)} · PID ${hex(snapshot.portInfo.usbProductId)}`;
+  return snapshot.selected ? "串口已授权" : "尚未选择串口";
+}
+
+function portLifecycleLabel(snapshot: PortSnapshot | null): string {
+  return snapshot ? `${HEALTH_TEXT[snapshot.health]} · ${LIFECYCLE_TEXT[snapshot.lifecycle]}` : "等待初始化";
+}
+
+function buildRemoteSerialStatus(
+  port: RemoteDebugPortState,
+  latestRemoteAge: number | null,
+  latestRemoteLog: { result: string } | null,
+  hasTx: boolean,
+): { status: RemoteCommandStatus; title: string; detail: string } {
+  const snapshot = port.snapshot;
+  if (!port.supported) {
+    if (latestRemoteAge !== null && latestRemoteAge <= 1500) {
+      return { status: "normal", title: "遥控器数据正在刷新", detail: "当前为通信诊断共享流、演示数据或回放数据；本浏览器环境未开放实时 Web Serial。" };
+    }
+    return { status: "unknown", title: "浏览器不支持 Web Serial", detail: "实时串口需要 HTTPS 下的桌面版 Chrome / Edge。" };
+  }
+  if (snapshot?.lifecycle === "reading" && snapshot.health === "valid") {
+    return {
+      status: "normal",
+      title: "遥控器串口正在接收",
+      detail: hasTx ? "RDBG 与 RDBG_TX 都在刷新，可直接看命令和协议数组。" : "RDBG 正在刷新；若要看协议数组，请烧录带 RDBG_TX 的遥控器固件。",
+    };
+  }
+  if (snapshot?.health === "wrong-role") {
+    return { status: "error", title: "遥控器串口疑似选错", detail: `检测到 ${snapshot.detectedRole ?? "其他"} 协议，请在本侧栏重新选择遥控器调试串口。` };
+  }
+  if (snapshot?.lifecycle === "reading") {
+    return { status: "warn", title: `遥控器串口${HEALTH_TEXT[snapshot.health]}`, detail: "端口已打开但尚未形成稳定 RDBG/RDBG_TX，请看 RX、帧和解析错误计数。" };
+  }
+  if (snapshot?.error) {
+    return { status: "error", title: "遥控器串口连接异常", detail: snapshot.error };
+  }
+  if (snapshot?.selected) {
+    return { status: "warn", title: "遥控器串口已选择未接收", detail: "已获得浏览器授权，但当前没有开始读取；可直接点击本侧栏的连接。" };
+  }
+  if (latestRemoteAge !== null && latestRemoteAge <= 1500) {
+    return { status: "normal", title: "遥控器数据正在刷新", detail: "当前数据来自通信诊断共享流或演示数据。" };
+  }
+  if (latestRemoteAge !== null) {
+    return { status: "warn", title: "遥控器 RDBG 已过期", detail: `${latestRemoteAge} ms 未刷新有效遥控器帧，请检查本侧栏串口是否断开或选错。` };
+  }
+  if (latestRemoteLog) {
+    return { status: "warn", title: "遥控器串口有输入", detail: `最近输入解析结果为 ${latestRemoteLog.result}，尚未形成有效 RDBG。请确认选到遥控器调试串口。` };
+  }
+  return { status: "unknown", title: "等待遥控器串口", detail: "可在本侧栏选择/连接遥控器调试串口；底层仍复用通信诊断页的同一个只读会话。" };
 }
 
 function ByteStrip({ hex }: { hex: string }) {
@@ -63,6 +139,9 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
   const latestRemoteAge = state.latestRemote ? nowMs - state.latestRemote.observedAtMs : null;
   const latestChassisAge = state.latestChassis ? nowMs - state.latestChassis.observedAtMs : null;
   const latestTxAge = state.latestTx ? nowMs - state.latestTx.observedAtMs : null;
+  const remotePort = state.ports.remote;
+  const remoteSnapshot = remotePort.snapshot;
+  const chassisSnapshot = state.ports.chassis.snapshot;
   const latestRemoteLog = useMemo(() => {
     for (let index = state.logs.length - 1; index >= 0; index -= 1) {
       const entry = state.logs[index];
@@ -71,33 +150,10 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
     return null;
   }, [state.logs]);
   const remoteSerialStatus = useMemo(() => {
-    if (latestRemoteAge !== null && latestRemoteAge <= 1500) {
-      return {
-        status: "normal" as const,
-        title: "遥控器串口正在接收",
-        detail: state.latestTx ? "RDBG 与 RDBG_TX 都在刷新，可直接看命令和协议数组。" : "RDBG 正在刷新；若要看协议数组，请烧录带 RDBG_TX 的遥控器固件。",
-      };
-    }
-    if (latestRemoteAge !== null) {
-      return {
-        status: "warn" as const,
-        title: "遥控器 RDBG 已过期",
-        detail: `${latestRemoteAge} ms 未刷新有效遥控器帧，请回通信诊断页检查端口是否断开或选错。`,
-      };
-    }
-    if (latestRemoteLog) {
-      return {
-        status: "warn" as const,
-        title: "遥控器串口有输入",
-        detail: `最近输入解析结果为 ${latestRemoteLog.result}，尚未形成有效 RDBG。请确认选到遥控器调试串口。`,
-      };
-    }
-    return {
-      status: "unknown" as const,
-      title: "等待遥控器串口",
-      detail: "串口连接由通信诊断页统一持有；本窗口只复用已采集的 remote 数据，不会重复打开端口。",
-    };
-  }, [latestRemoteAge, latestRemoteLog, state.latestTx]);
+    return buildRemoteSerialStatus(remotePort, latestRemoteAge, latestRemoteLog, state.latestTx !== null);
+  }, [latestRemoteAge, latestRemoteLog, remotePort, state.latestTx]);
+  const remotePortBusy = remoteSnapshot?.lifecycle === "requesting" || remoteSnapshot?.lifecycle === "opening" || remoteSnapshot?.lifecycle === "closing";
+  const remotePortReading = remoteSnapshot?.lifecycle === "reading";
 
   return <main className="workspace remote-control-workspace" data-testid="remote-control-workspace">
     <WorkspaceHeader
@@ -119,13 +175,25 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
           </div>
         </div>
         <dl className="remote-serial-stats">
+          <div><dt>串口状态</dt><dd>{portLifecycleLabel(remoteSnapshot)}</dd></div>
+          <div><dt>设备标识</dt><dd>{deviceLabel(remoteSnapshot)}</dd></div>
+          <div><dt>RX 字节</dt><dd>{remoteSnapshot?.stats.bytesReceived.toLocaleString() ?? "—"} B</dd></div>
+          <div><dt>有效帧</dt><dd>{remoteSnapshot?.stats.validFrames.toLocaleString() ?? "—"}</dd></div>
+          <div><dt>解析错误</dt><dd>{remoteSnapshot?.stats.parseErrors.toLocaleString() ?? "—"}</dd></div>
           <div><dt>RDBG age</dt><dd>{latestRemoteAge === null ? "—" : `${latestRemoteAge} ms`}</dd></div>
           <div><dt>RDBG_TX age</dt><dd>{latestTxAge === null ? "—" : `${latestTxAge} ms`}</dd></div>
           <div><dt>当前频道</dt><dd>{state.latestRemote ? `CH ${state.latestRemote.rfCh}` : "—"}</dd></div>
           <div><dt>最近命令</dt><dd>{state.latestTx ? `${state.latestTx.packetType} #${state.latestTx.seq}` : "—"}</dd></div>
+          <div><dt>底盘参考</dt><dd>{portLifecycleLabel(chassisSnapshot)}</dd></div>
         </dl>
-        <p className="remote-serial-note">这里不提供第二套“选择串口”，避免同一个浏览器端口被重复占用。需要连接/断开时回到通信诊断页操作。</p>
-        <button type="button" className="wide secondary" onClick={onOpenCommunication}>去通信诊断连接串口</button>
+        <div className="remote-serial-actions">
+          <button type="button" className="secondary" disabled={!remotePort.supported || !remotePort.controlsReady || remotePortReading || remotePortBusy} onClick={() => void remoteDebugStore.selectPort("remote")}>选择遥控器串口</button>
+          {remotePortReading
+            ? <button type="button" className="danger subtle" disabled={!remotePort.controlsReady} onClick={() => void remoteDebugStore.closePort("remote")}>断开</button>
+            : <button type="button" disabled={!remotePort.supported || !remotePort.controlsReady || !remoteSnapshot?.selected || remotePortBusy} onClick={() => void remoteDebugStore.connectPort("remote")}>连接</button>}
+        </div>
+        <p className="remote-serial-note">侧栏操作的是通信诊断页同一个只读 Web Serial 会话，不创建第二个端口、不发送任何字节。若要同时看底盘串口，可回通信诊断页。</p>
+        <button type="button" className="wide secondary" onClick={onOpenCommunication}>打开通信诊断全量串口</button>
       </aside>
 
       <div className="remote-workspace-main">

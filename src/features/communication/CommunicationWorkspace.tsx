@@ -172,28 +172,32 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     stopDemo();
     resetChassis();
   });
+  const { supported: remoteSupported, snapshot: remoteSnapshot } = remotePort;
+  const { supported: chassisSupported, snapshot: chassisSnapshot } = chassisPort;
+  const { select: selectRemotePort, connect: connectRemotePort, close: closeRemotePort } = remotePort;
+  const { select: selectChassisPort, connect: connectChassisPort, close: closeChassisPort } = chassisPort;
   const remoteWasReading = useRef(false);
   const chassisWasReading = useRef(false);
 
   useEffect(() => {
-    remoteDebugStore.publishPort("remote", remotePort.supported, remotePort.snapshot);
-  }, [remotePort.snapshot, remotePort.supported]);
+    remoteDebugStore.publishPort("remote", remoteSupported, remoteSnapshot);
+  }, [remoteSnapshot, remoteSupported]);
 
   useEffect(() => {
-    remoteDebugStore.publishPort("chassis", chassisPort.supported, chassisPort.snapshot);
-  }, [chassisPort.snapshot, chassisPort.supported]);
+    remoteDebugStore.publishPort("chassis", chassisSupported, chassisSnapshot);
+  }, [chassisSnapshot, chassisSupported]);
 
   useEffect(() => remoteDebugStore.registerPortActions("remote", {
-    select: async () => { stopDemo(); resetRemote(); await remotePort.select(); },
-    connect: async () => { stopDemo(); await remotePort.connect(); },
-    close: async () => { resetRemote(); await remotePort.close(); },
-  }), [remotePort.select, remotePort.connect, remotePort.close, resetRemote, stopDemo]);
+    select: async () => { stopDemo(); resetRemote(); await selectRemotePort(); },
+    connect: async () => { stopDemo(); await connectRemotePort(); },
+    close: async () => { resetRemote(); await closeRemotePort(); },
+  }), [selectRemotePort, connectRemotePort, closeRemotePort, resetRemote, stopDemo]);
 
   useEffect(() => remoteDebugStore.registerPortActions("chassis", {
-    select: async () => { stopDemo(); resetChassis(); await chassisPort.select(); },
-    connect: async () => { stopDemo(); await chassisPort.connect(); },
-    close: async () => { resetChassis(); await chassisPort.close(); },
-  }), [chassisPort.select, chassisPort.connect, chassisPort.close, resetChassis, stopDemo]);
+    select: async () => { stopDemo(); resetChassis(); await selectChassisPort(); },
+    connect: async () => { stopDemo(); await connectChassisPort(); },
+    close: async () => { resetChassis(); await closeChassisPort(); },
+  }), [selectChassisPort, connectChassisPort, closeChassisPort, resetChassis, stopDemo]);
 
   useEffect(() => {
     if (remoteWasReading.current && remotePort.snapshot.lifecycle !== "reading") {

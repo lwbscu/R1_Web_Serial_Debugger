@@ -308,6 +308,8 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .remote-serial-stats div { display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 1px solid #192c39; border-radius: 8px; background: #08121a; }
 .remote-serial-stats dt { color: #657f92; font: 9px ui-monospace, Consolas, monospace; text-transform: uppercase; }
 .remote-serial-stats dd { margin: 0; overflow: hidden; color: #dcebf5; font: 700 11px ui-monospace, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.remote-serial-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 0 0 10px; }
+.remote-serial-actions button, .remote-serial-sidebar button.wide { width: 100%; }
 .remote-serial-note { margin: 0 0 12px; color: #6e8799; font-size: 11px; line-height: 1.55; }
 .status-orb.warn { background: var(--warn); box-shadow: 0 0 0 4px rgba(255, 194, 64, .08), 0 0 12px rgba(255, 194, 64, .28); }
 .status-orb.error { background: var(--error); box-shadow: 0 0 0 4px rgba(255, 91, 110, .08), 0 0 12px rgba(255, 91, 110, .3); }

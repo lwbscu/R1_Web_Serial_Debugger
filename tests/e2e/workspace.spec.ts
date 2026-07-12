@@ -116,8 +116,9 @@ test("keeps workspaces mounted and explains unsupported Web Serial", async ({ pa
 
   await page.getByRole("button", { name: /遥控器窗口/ }).click();
   await expect(page.getByRole("heading", { name: "遥控器窗口" })).toBeVisible();
-  await expect(page.getByLabel("遥控器串口侧栏")).toContainText("等待遥控器串口");
-  await expect(page.getByRole("button", { name: "去通信诊断连接串口" })).toBeVisible();
+  await expect(page.getByLabel("遥控器串口侧栏")).toContainText("浏览器不支持 Web Serial");
+  await expect(page.getByRole("button", { name: "选择遥控器串口" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "打开通信诊断全量串口" })).toBeVisible();
   await expect(page.getByText("当前命令")).toBeVisible();
   await expect(page.getByText("协议数组")).toBeVisible();
 
@@ -137,7 +138,7 @@ test("remote command window reuses communication demo data", async ({ page }) =>
   await expect(page.getByRole("heading", { name: "遥控器窗口" })).toBeVisible();
   const remoteWindow = page.getByTestId("remote-control-workspace");
   await expect(remoteWindow.locator(".remote-hero strong")).toContainText(/ADC|MODE|KEY|ACT/);
-  await expect(remoteWindow.getByLabel("遥控器串口侧栏")).toContainText("遥控器串口正在接收");
+  await expect(remoteWindow.getByLabel("遥控器串口侧栏")).toContainText("遥控器数据正在刷新");
   await expect(remoteWindow.locator(".byte-strip code").first()).toBeVisible();
   await expect(remoteWindow.getByText("效果链路")).toBeVisible();
 });
@@ -403,6 +404,11 @@ test("read-only probes three authorized ports and auto-binds unique roles", asyn
 
   await expect(page.getByRole("button", { name: "演示数据" })).toBeVisible();
   await expect(page.locator(".workspace-host.active").getByText("正在接收")).toHaveCount(2);
+  await page.getByRole("button", { name: /遥控器窗口/ }).click();
+  const remotePanel = page.getByTestId("remote-control-workspace").getByLabel("遥控器串口侧栏");
+  await expect(remotePanel).toContainText("遥控器串口正在接收");
+  await expect(remotePanel).toContainText("数据正常");
+  await expect(remotePanel.getByRole("button", { name: "断开" })).toBeVisible();
   await page.getByRole("button", { name: /定位地图/ }).click();
   await expect(page.getByRole("button", { name: "演示轨迹" })).toBeVisible();
   await expect(page.locator(".workspace-host.active").getByText("正在接收")).toHaveCount(1);
