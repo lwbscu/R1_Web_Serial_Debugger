@@ -90,17 +90,26 @@ describe("locator start-relative coordinates", () => {
     expect(localToField(local, contextForSide("blue"))).toEqual({ x: 573.5, y: 536, yawDeg: -37 });
   });
 
-  it("uses preliminary 9gong anchors above the exit line and rotates +Y to the vehicle front", () => {
+  it("uses preliminary 9gong anchors from the R1 channel and forest lower boundary", () => {
     const redStart = LOCATOR_START_POSES.preliminary.red;
     const blueStart = LOCATOR_START_POSES.preliminary.blue;
-    expect(redStart.fieldAnchorCm).toEqual({ x: -547.5, y: -300, yawDeg: 90 });
-    expect(blueStart.fieldAnchorCm).toEqual({ x: 547.5, y: -300, yawDeg: 270 });
-    expect(redStart.fieldAnchorCm.x - (-607.5)).toBeCloseTo(60);
-    expect(607.5 - blueStart.fieldAnchorCm.x).toBeCloseTo(60);
-    expect(redStart.fieldAnchorCm.y - (-344.5)).toBeCloseTo(44.5);
-    expect(blueStart.fieldAnchorCm.y - (-344.5)).toBeCloseTo(44.5);
-    expect(redStart.fieldAnchorCm.y).toBeGreaterThan(-330);
-    expect(blueStart.fieldAnchorCm.y).toBeGreaterThan(-329.75);
+    const redR1ChannelInnerLineX = -487.5;
+    const blueR1ChannelInnerLineX = 487.5;
+    const forestLowerY = -195;
+    const robotHalfWidthCm = 41.5;
+    const rampTopY = -330;
+    expect(redStart.fieldAnchorCm).toEqual({ x: -547.5, y: -239.5, yawDeg: 90 });
+    expect(blueStart.fieldAnchorCm).toEqual({ x: 547.5, y: -239.5, yawDeg: 270 });
+    expect(redR1ChannelInnerLineX - redStart.fieldAnchorCm.x).toBeCloseTo(60);
+    expect(blueStart.fieldAnchorCm.x - blueR1ChannelInnerLineX).toBeCloseTo(60);
+    expect(forestLowerY - redStart.fieldAnchorCm.y).toBeCloseTo(44.5);
+    expect(forestLowerY - blueStart.fieldAnchorCm.y).toBeCloseTo(44.5);
+    expect(redStart.r1ChannelBoundaryDistanceCm).toBe(60);
+    expect(blueStart.r1ChannelBoundaryDistanceCm).toBe(60);
+    expect(redStart.forestLowerBoundaryDistanceCm).toBe(44.5);
+    expect(blueStart.forestLowerBoundaryDistanceCm).toBe(44.5);
+    expect(redStart.fieldAnchorCm.y - robotHalfWidthCm).toBeGreaterThan(rampTopY);
+    expect(blueStart.fieldAnchorCm.y - robotHalfWidthCm).toBeGreaterThan(rampTopY);
 
     const red = contextForSide("red", "preliminary");
     const blue = contextForSide("blue", "preliminary");
@@ -109,16 +118,16 @@ describe("locator start-relative coordinates", () => {
     const blueFront = localToField({ x: 0, y: 10, yawDeg: 0 }, blue);
     const blueRight = localToField({ x: 10, y: 0, yawDeg: 0 }, blue);
     expect(redFront.x).toBeCloseTo(-537.5);
-    expect(redFront.y).toBeCloseTo(-300);
+    expect(redFront.y).toBeCloseTo(-239.5);
     expect(redFront.yawDeg).toBe(90);
     expect(redRight.x).toBeCloseTo(-547.5);
-    expect(redRight.y).toBeCloseTo(-310);
+    expect(redRight.y).toBeCloseTo(-249.5);
     expect(redRight.yawDeg).toBe(90);
     expect(blueFront.x).toBeCloseTo(537.5);
-    expect(blueFront.y).toBeCloseTo(-300);
+    expect(blueFront.y).toBeCloseTo(-239.5);
     expect(blueFront.yawDeg).toBe(270);
     expect(blueRight.x).toBeCloseTo(547.5);
-    expect(blueRight.y).toBeCloseTo(-290);
+    expect(blueRight.y).toBeCloseTo(-229.5);
     expect(blueRight.yawDeg).toBe(270);
   });
 

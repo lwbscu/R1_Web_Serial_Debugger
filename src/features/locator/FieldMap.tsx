@@ -132,8 +132,8 @@ function poseLocalPoint(world: Point, pose: Pose): Point {
 
 function matchStartTooltip(start: LocatorStartPose): string {
   const pose = startPoseAsPose(start);
-  const distanceLine = start.sideBoundaryDistanceCm !== undefined && start.lowerBoundaryDistanceCm !== undefined
-    ? `距侧边界 ${start.sideBoundaryDistanceCm.toFixed(1)} cm · 在九宫下边界上方 ${start.lowerBoundaryDistanceCm.toFixed(1)} cm`
+  const distanceLine = start.r1ChannelBoundaryDistanceCm !== undefined && start.forestLowerBoundaryDistanceCm !== undefined
+    ? `距 R1 通道边线 ${start.r1ChannelBoundaryDistanceCm.toFixed(1)} cm · 距树林下边界 ${start.forestLowerBoundaryDistanceCm.toFixed(1)} cm`
     : "正式赛原有红蓝方起点锚点";
   return [
     start.label,

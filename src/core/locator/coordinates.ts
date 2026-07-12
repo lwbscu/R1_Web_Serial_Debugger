@@ -25,8 +25,8 @@ export interface LocatorStartPose {
   matchType: LocatorMatchType;
   label: string;
   fieldAnchorCm: LocatorCoordinateContext["fieldAnchorCm"];
-  sideBoundaryDistanceCm?: number;
-  lowerBoundaryDistanceCm?: number;
+  r1ChannelBoundaryDistanceCm?: number;
+  forestLowerBoundaryDistanceCm?: number;
 }
 
 export const LOCATOR_COORDINATE_TRANSFORM_VERSION: LocatorTransformVersion = "r1-start-relative-v2";
@@ -51,17 +51,17 @@ export const LOCATOR_START_POSES: Readonly<Record<LocatorMatchType, Record<Locat
       side: "red",
       matchType: "preliminary",
       label: "预选赛红方 9gong 起点",
-      fieldAnchorCm: { x: -547.5, y: -300, yawDeg: 90 },
-      sideBoundaryDistanceCm: 60,
-      lowerBoundaryDistanceCm: 44.5,
+      fieldAnchorCm: { x: -547.5, y: -239.5, yawDeg: 90 },
+      r1ChannelBoundaryDistanceCm: 60,
+      forestLowerBoundaryDistanceCm: 44.5,
     },
     blue: {
       side: "blue",
       matchType: "preliminary",
       label: "预选赛蓝方 9gong 起点",
-      fieldAnchorCm: { x: 547.5, y: -300, yawDeg: 270 },
-      sideBoundaryDistanceCm: 60,
-      lowerBoundaryDistanceCm: 44.5,
+      fieldAnchorCm: { x: 547.5, y: -239.5, yawDeg: 270 },
+      r1ChannelBoundaryDistanceCm: 60,
+      forestLowerBoundaryDistanceCm: 44.5,
     },
   },
 };
