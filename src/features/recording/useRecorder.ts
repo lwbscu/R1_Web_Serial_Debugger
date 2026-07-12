@@ -294,11 +294,34 @@ export function useRecorder(kind: RecordingKind): RecorderController {
     armFlushTimer(target);
   }, [armFlushTimer]);
 
-  const exportVolumes = useCallback((store: OpfsFileStore, id: string, onProgress: (progress: ExportSessionProgress) => void | Promise<void>): AsyncGenerator<ExportedVolume, void, void> => {
+  const exportVolumes = useCallback(async function* (
+    store: OpfsFileStore,
+    id: string,
+    onProgress: (progress: ExportSessionProgress) => void | Promise<void>,
+  ): AsyncGenerator<ExportedVolume, void, void> {
     if (typeof Worker === "undefined") {
-      return exportSessionVolumes(store, id, { onProgress });
+      yield* exportSessionVolumes(store, id, { onProgress });
+      return;
     }
-    return exportSessionVolumesInWorker(id, { onProgress });
+    let yielded = false;
+    try {
+      for await (const volume of exportSessionVolumesInWorker(id, { onProgress })) {
+        yielded = true;
+        yield volume;
+      }
+    } catch (reason) {
+      if (yielded) throw reason;
+      await onProgress({
+        phase: "reading",
+        sessionId: id,
+        volumeIndex: 1,
+        volumeTotal: 1,
+        bytesRead: 0,
+        totalBytes: 0,
+        percent: 0,
+      });
+      yield* exportSessionVolumes(store, id, { onProgress });
+    }
   }, []);
 
   const runExportJob = useCallback(async (id: string) => {
@@ -417,19 +440,17 @@ export function useRecorder(kind: RecordingKind): RecorderController {
         });
         if (previousFlush) await previousFlush;
         if (items.length > 0) {
-          for (const [index, item] of items.entries()) {
-            setDownloadProgress({
-              phase: "stopping",
-              sessionId: id,
-              current: 2,
-              total: 4,
-              percent: 10 + Math.round(((index + 1) / items.length) * 15),
-              label: "后台落盘旧录制",
-              detail: `正在写入 ${item.artifact} (${index + 1}/${items.length}) · 最后 ${stats.count} 条 / ${formatBytes(stats.bytes)}`,
-            });
-            await recorder.appendBatch([item]);
-            await yieldToBrowser();
-          }
+          setDownloadProgress({
+            phase: "stopping",
+            sessionId: id,
+            current: 2,
+            total: 4,
+            percent: 20,
+            label: "后台落盘旧录制",
+            detail: `正在批量写入 ${items.length} 个文件 · 最后 ${stats.count} 条 / ${formatBytes(stats.bytes)}`,
+          });
+          await recorder.appendBatch(items);
+          await yieldToBrowser();
         }
         setDownloadProgress({
           phase: "stopping",

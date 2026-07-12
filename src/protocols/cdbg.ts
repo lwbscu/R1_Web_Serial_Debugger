@@ -40,9 +40,9 @@ const V2_90_FIELDS = [
 ] as const;
 
 /**
- * Frozen CDBG v3 extension.  Keep this order byte-for-byte aligned with both
- * chassis firmware branches; a v3 frame is 3 header tokens + 87 v2 payload
- * tokens + these 61 tokens = 151 tokens in total.
+ * Frozen CDBG v3 extension. Keep this order byte-for-byte aligned with
+ * chassis firmware. A v3 frame is 3 header tokens + 87 v2 payload tokens +
+ * these 61 tokens = 151 tokens in total.
  */
 export const V3_EXTENSION_FIELDS = [
   "resetFlags", "linkAlive", "rawScore", "chassisState", "activeRemoteModeLive", "stateQ",
@@ -60,6 +60,11 @@ export const V3_EXTENSION_FIELDS = [
   "mechFeedbackOkCount", "mechFeedbackBadCount", "mechFeedbackQueueDropCount",
   "mechFeedbackAgeMs", "uart1ErrorCount", "uart1RearmOkCount", "uart1RearmFailCount",
   "uart1RxByteCount", "uart1RxByteAgeMs",
+] as const;
+
+export const V4_EXTENSION_FIELDS = [
+  "drvPidOut1", "drvPidOut2", "drvPidOut3", "drvPidOut4",
+  "steerPidOut1", "steerPidOut2", "steerPidOut3", "steerPidOut4",
 ] as const;
 
 const UINT32_SENTINEL_FIELDS = new Set<string>([
@@ -84,6 +89,8 @@ const FLOAT_FIELDS = new Set([
   "packetLossRate", "cmdVx", "cmdVy", "cmdWz", "drvCmd1", "drvCmd2", "drvCmd3", "drvCmd4",
   "drvFb1", "drvFb2", "drvFb3", "drvFb4", "steerCmd1", "steerCmd2", "steerCmd3", "steerCmd4",
   "steerFb1", "steerFb2", "steerFb3", "steerFb4", "steerErr1", "steerErr2", "steerErr3", "steerErr4",
+  "drvPidOut1", "drvPidOut2", "drvPidOut3", "drvPidOut4",
+  "steerPidOut1", "steerPidOut2", "steerPidOut3", "steerPidOut4",
 ]);
 
 function assignFields(frame: ChassisFrame, names: readonly string[], values: readonly string[], normalizeSentinels = false): void {
@@ -106,17 +113,18 @@ export function parseCdbg(line: string, observedAtMs: number): ParseOutcome<Chas
   let warnings: string[] = [];
 
   try {
-    if (parts[1] === "3") {
+    if (parts[1] === "3" || parts[1] === "4") {
       const version = integer(parts[1]!, "protocol_version");
       const declared = integer(parts[2]!, "field_count");
-      if (version !== 3) return { kind: "error", code: "unsupported_version", detail: `CDBG version ${version}` };
-      if (declared !== 151) return { kind: "error", code: "unsupported_field_count", detail: `CDBG v3 field_count ${declared}` };
-      if (parts.length < declared) return { kind: "error", code: "incomplete_frame", detail: `CDBG v3 incomplete field count ${parts.length} < ${declared}` };
-      if (parts.length > declared) return { kind: "error", code: "trailing_fields", detail: `CDBG v3 trailing field count ${parts.length} > ${declared}` };
-      const frame: ChassisFrame = { observedAtMs, rawLine, protocolVersion: 3, fieldCount: 151 };
+      const expected = version === 4 ? 159 : 151;
+      if (declared !== expected) return { kind: "error", code: "unsupported_field_count", detail: `CDBG v${version} field_count ${declared}` };
+      if (parts.length < declared) return { kind: "error", code: "incomplete_frame", detail: `CDBG v${version} incomplete field count ${parts.length} < ${declared}` };
+      if (parts.length > declared) return { kind: "error", code: "trailing_fields", detail: `CDBG v${version} trailing field count ${parts.length} > ${declared}` };
+      const frame: ChassisFrame = { observedAtMs, rawLine, protocolVersion: version, fieldCount: declared };
       assignFields(frame, V2_90_FIELDS, parts.slice(3, 90), true);
-      assignFields(frame, V3_EXTENSION_FIELDS, parts.slice(90), true);
-      return { kind: "frame", frame, protocolVersion: "cdbg-v3", warnings };
+      assignFields(frame, V3_EXTENSION_FIELDS, parts.slice(90, 151), true);
+      if (version === 4) assignFields(frame, V4_EXTENSION_FIELDS, parts.slice(151), true);
+      return { kind: "frame", frame, protocolVersion: version === 4 ? "cdbg-v4" : "cdbg-v3", warnings };
     }
 
     if (/^\d+$/.test(parts[1] ?? "") && Number(parts[1]) >= 2 && parts.length > 72) {
@@ -153,7 +161,7 @@ export function parseCdbg(line: string, observedAtMs: number): ParseOutcome<Chas
     return {
       kind: "error",
       code: "field_count",
-      detail: `CDBG field count ${parts.length} != 30/35/72/90/151`,
+      detail: `CDBG field count ${parts.length} != 30/35/72/90/151/159`,
     };
   } catch (error) {
     return outcomeError(error);
@@ -197,8 +205,10 @@ function eventOutcome(clean: string, observedAtMs: number): ParseOutcome<Chassis
     if (parts.length !== 5) return { kind: "error", code: "field_count", detail: `CDBG_BOOT field count ${parts.length} != 5` };
     const version = integer(parts[1]!, "protocol_version");
     const declared = integer(parts[2]!, "field_count");
-    if (version !== 3) return { kind: "error", code: "unsupported_version", detail: `CDBG_BOOT version ${version}` };
-    if (declared !== 151) return { kind: "error", code: "unsupported_field_count", detail: `CDBG_BOOT field_count ${declared}` };
+    if (version !== 3 && version !== 4) return { kind: "error", code: "unsupported_version", detail: `CDBG_BOOT version ${version}` };
+    if ((version === 3 && declared !== 151) || (version === 4 && declared !== 159)) {
+      return { kind: "error", code: "unsupported_field_count", detail: `CDBG_BOOT field_count ${declared}` };
+    }
     const sourceTimeMs = integer(parts[3]!, "ms");
     const event: ProtocolEvent = {
       source: "chassis", eventKind: "CDBG_BOOT", observedAtMs, sourceTimeMs,
@@ -244,7 +254,7 @@ function eventOutcome(clean: string, observedAtMs: number): ParseOutcome<Chassis
 
 export class ChassisProtocolAdapter implements ProtocolAdapter<ChassisFrame> {
   readonly id = "chassis-cdbg";
-  readonly parserVersion = "3.0.0";
+  readonly parserVersion = "4.0.0";
 
   parse(line: string, observedAtMs: number): ParseOutcome<ChassisFrame> {
     const marker = line.search(/CDBG_BOOT,|CDBG,|CEVT,/);

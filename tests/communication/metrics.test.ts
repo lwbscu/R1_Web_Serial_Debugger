@@ -36,7 +36,7 @@ describe("Python-equivalent metric configuration", () => {
   it("defines every required metric with five tooltip sections", () => {
     expect(remoteMetricSpecs).toHaveLength(11);
     expect(chassisNrfMetricSpecs).toHaveLength(15);
-    expect(locationMetricSpecs).toHaveLength(17);
+    expect(locationMetricSpecs).toHaveLength(19);
     expect(wirelessReceiveMetricSpecs).toHaveLength(8);
     expect(modeSyncMetricSpecs).toHaveLength(4);
     expect(mechanismMetricSpecs).toHaveLength(5);

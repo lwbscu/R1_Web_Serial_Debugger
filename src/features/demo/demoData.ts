@@ -79,8 +79,8 @@ export function demoChassisFrame(atMs = Date.now()): ChassisFrame {
   const frame: ChassisFrame = {
     observedAtMs: atMs,
     rawLine: "CDBG,DEMO",
-    protocolVersion: 3,
-    fieldCount: 151,
+    protocolVersion: 4,
+    fieldCount: 159,
     ms: Math.floor(atMs % 0xFFFFFFFF), seq: Math.floor(t * 20) % 65536,
     locSrc: 1, posX: wave(t, 7, 180), posY: wave(t, 9, 140), yaw: (t * 8) % 360,
     locaterX: wave(t, 7, 180), locaterY: wave(t, 9, 140), locaterYaw: (t * 8) % 360,
@@ -123,6 +123,8 @@ export function demoChassisFrame(atMs = Date.now()): ChassisFrame {
     frame[`steerCmd${index}`] = steering + index * 0.4;
     frame[`steerFb${index}`] = steering + index * 0.4 - wave(t, 1.1, 1.2);
     frame[`steerErr${index}`] = wave(t, 1.1, 1.2);
+    frame[`drvPidOut${index}`] = Number(frame[`drvCmd${index}`]);
+    frame[`steerPidOut${index}`] = wave(t, 8 + index * 0.4, 900);
   }
   return frame;
 }

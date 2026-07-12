@@ -1,5 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { unzipSync } from "fflate";
 import { bodyToWorld, DT35_MOUNTS, FIELD_BOUNDS } from "../../src/features/locator/geometry";
+
+const CONNECTION_STATUS_HEADER = "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error";
 
 async function disableWebSerial(page: Page) {
   await page.addInitScript(() => {
@@ -46,7 +50,7 @@ async function installMockSerial(page: Page) {
       }
     }
 
-    const cdbgV3 = (() => {
+    const cdbgV4 = (() => {
       const prefix = Array.from({ length: 87 }, (_, index) => String(index + 1));
       const extension = Array.from({ length: 61 }, () => "0");
       extension[18] = "0"; // taskFrameAgeMs
@@ -62,7 +66,8 @@ async function installMockSerial(page: Page) {
       extension[55] = "0"; // mechFeedbackAgeMs
       extension[59] = "1"; // uart1RxByteCount
       extension[60] = "0"; // uart1RxByteAgeMs
-      return ["CDBG", "3", "151", ...prefix, ...extension].join(",") + "\n";
+      const outputs = ["1.1", "1.2", "1.3", "1.4", "11", "12", "13", "14"];
+      return ["CDBG", "4", "159", ...prefix, ...extension, ...outputs].join(",") + "\n";
     })();
     const ports = [
       new MockSerialPort([
@@ -70,7 +75,7 @@ async function installMockSerial(page: Page) {
         "RDBG_TX,1,120,8,ACT,5,5B02010101,1,6,875C02010101,0,1,2,1,1,1\n",
       ], { usbVendorId: 0x0483, usbProductId: 0x5740 }),
       new MockSerialPort([
-        cdbgV3,
+        cdbgV4,
         "CEVT,MECH_CMD,130,1,2,1,1,1,1\n",
         "CEVT,MECH_CMD,140,3,2,1,1,1,0\n",
         "CEVT,MECH_TX,150,2,2,1,1,1,0,3\n",
@@ -187,7 +192,15 @@ test("shows progress while stopping and downloading a local recording", async ({
   await expect(communicationStatus).toBeVisible();
   await expect(communicationStatus.getByRole("progressbar", { name: "录制下载进度" })).toBeVisible();
   await expect(communicationStatus).toContainText("100%");
-  expect((await communicationDownload).suggestedFilename()).toMatch(/^global_/);
+  const downloaded = await communicationDownload;
+  expect(downloaded.suggestedFilename()).toMatch(/^global_/);
+  const downloadPath = await downloaded.path();
+  expect(downloadPath).toBeTruthy();
+  const entries = unzipSync(readFileSync(downloadPath!));
+  const connectionStatus = new TextDecoder().decode(entries["connection_status.csv"]!);
+  const lines = connectionStatus.trimEnd().split(/\r?\n/);
+  expect(lines[0]).toBe(CONNECTION_STATUS_HEADER);
+  expect(lines.filter((line) => line === CONNECTION_STATUS_HEADER)).toHaveLength(1);
 
   await page.setViewportSize({ width: 375, height: 812 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
@@ -243,7 +256,7 @@ test("shows diagnostic tooltips and a working multi-series waveform demo", async
   });
   expect(serialTipHitTest.visible, JSON.stringify(serialTipHitTest)).toBeTruthy();
   await page.getByRole("button", { name: "演示数据" }).click();
-  await expect(page.locator(".diagnostic-metric").filter({ hasText: "CDBG version" })).toContainText("v3, 151 fields");
+  await expect(page.locator(".diagnostic-metric").filter({ hasText: "CDBG version" })).toContainText("v4, 159 fields");
   const noAck = page.locator(".diagnostic-metric").filter({ hasText: "无 ACK 时间" });
   await expect(noAck).toBeVisible();
   await noAck.hover();
@@ -473,7 +486,7 @@ test("read-only probes three authorized ports and auto-binds unique roles", asyn
   await expect(remoteWorkspace.locator(".mechanism-live-panel")).toContainText("机构有效回传");
   await expect(remoteWorkspace.locator(".mechanism-live-panel")).toContainText("state");
   await expect(remoteWorkspace.locator(".mechanism-live-panel")).toContainText("stage");
-  await expect(remoteWorkspace.locator(".remote-context-grid")).toContainText("v3/151");
+  await expect(remoteWorkspace.locator(".remote-context-grid")).toContainText("v4/159");
   await expect(remoteWorkspace.locator(".remote-tx-row.type-act").first()).toContainText("state=2 stage=1 exec=1 enabled=1");
   await page.getByRole("button", { name: /定位地图/ }).click();
   await expect(page.getByRole("button", { name: "演示轨迹" })).toBeVisible();

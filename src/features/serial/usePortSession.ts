@@ -4,6 +4,8 @@ import { browserSerialProvider, PortSession, probePort, supportsWebSerial, type 
 import { serialSessionRegistry } from "./serialSessionRegistry";
 import { serialHubStore, SERIAL_ROLE_LABELS } from "./serialHubStore";
 
+const SNAPSHOT_COALESCE_MS = 100;
+
 const emptySnapshot = (role: SourceRole): PortSnapshot => ({
   role, lifecycle: "idle", health: "no-data", selected: false,
   portInfo: null,
@@ -22,8 +24,40 @@ export function usePortSession<T>(
   const beforeExternalBindRef = useRef(beforeExternalBind);
   beforeExternalBindRef.current = beforeExternalBind;
   const [snapshot, setSnapshot] = useState(() => emptySnapshot(role));
+  const snapshotRef = useRef(snapshot);
+  const pendingSnapshotRef = useRef<PortSnapshot | null>(null);
+  const snapshotTimerRef = useRef<number | null>(null);
   const supported = typeof window !== "undefined" && window.isSecureContext && supportsWebSerial();
   const baseProvider = useMemo(() => supported ? browserSerialProvider() : null, [supported]);
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+  const flushPendingSnapshot = useCallback(() => {
+    if (snapshotTimerRef.current !== null) {
+      window.clearTimeout(snapshotTimerRef.current);
+      snapshotTimerRef.current = null;
+    }
+    const next = pendingSnapshotRef.current;
+    if (!next) return;
+    pendingSnapshotRef.current = null;
+    snapshotRef.current = next;
+    setSnapshot(next);
+  }, []);
+  const publishSnapshot = useCallback((next: PortSnapshot) => {
+    const previous = snapshotRef.current;
+    const urgent = previous.lifecycle !== next.lifecycle ||
+      previous.health !== next.health ||
+      previous.selected !== next.selected ||
+      previous.detectedRole !== next.detectedRole ||
+      previous.error !== next.error;
+    pendingSnapshotRef.current = next;
+    if (urgent) {
+      flushPendingSnapshot();
+      return;
+    }
+    if (snapshotTimerRef.current !== null) return;
+    snapshotTimerRef.current = window.setTimeout(flushPendingSnapshot, SNAPSHOT_COALESCE_MS);
+  }, [flushPendingSnapshot]);
   const provider = useMemo(() => baseProvider ? {
     requestPort: async (options?: { filters?: readonly { usbVendorId?: number; usbProductId?: number }[] }) => {
       const port = await baseProvider.requestPort(options);
@@ -49,12 +83,15 @@ export function usePortSession<T>(
     provider,
     adapter,
     onLine: (line) => callback.current(line),
-    onChange: setSnapshot,
+    onChange: publishSnapshot,
     onWrongRole: (event) => {
       void serialSessionRegistry.migrateWrongRole(event.fromRole, event.detectedRole, event.port)
         .then((result) => serialHubStore.publishAutoMessage(result.role, result.message));
     },
-  }) : null, [role, provider, adapter]);
+  }) : null, [role, provider, adapter, publishSnapshot]);
+  useEffect(() => () => {
+    if (snapshotTimerRef.current !== null) window.clearTimeout(snapshotTimerRef.current);
+  }, []);
   useEffect(() => {
     if (!session) return;
     return serialSessionRegistry.register(role, {

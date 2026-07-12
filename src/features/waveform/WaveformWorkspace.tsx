@@ -24,7 +24,9 @@ const PRESETS: ReadonlyArray<{ label: string; fields: SeriesId[] }> = [
   { label: "定位 XY", fields: ["locator:posXcm", "locator:posYcm", "locator:lidarXcm", "locator:lidarYcm"] },
   { label: "姿态角", fields: ["locator:posYawDeg", "locator:h30YawDeg", "locator:lidarYawDeg"] },
   { label: "DT35", fields: ["locator:dt35_1mm", "locator:dt35_2mm"] },
-  { label: "驱动反馈", fields: ["chassis:drvCmd1", "chassis:drvFb1", "chassis:drvCmd2", "chassis:drvFb2"] },
+  { label: "四轮驱动", fields: ["chassis:drvCmd1", "chassis:drvFb1", "chassis:drvCmd2", "chassis:drvFb2", "chassis:drvCmd3", "chassis:drvFb3", "chassis:drvCmd4", "chassis:drvFb4"] },
+  { label: "舵向闭环", fields: ["chassis:steerCmd1", "chassis:steerFb1", "chassis:steerErr1", "chassis:steerCmd2", "chassis:steerFb2", "chassis:steerErr2", "chassis:steerCmd3", "chassis:steerFb3", "chassis:steerErr3", "chassis:steerCmd4", "chassis:steerFb4", "chassis:steerErr4"] },
+  { label: "八电机输出", fields: ["chassis:drvPidOut1", "chassis:drvPidOut2", "chassis:drvPidOut3", "chassis:drvPidOut4", "chassis:steerPidOut1", "chassis:steerPidOut2", "chassis:steerPidOut3", "chassis:steerPidOut4"] },
 ];
 
 function formatTimeSpan(seconds: number): string {

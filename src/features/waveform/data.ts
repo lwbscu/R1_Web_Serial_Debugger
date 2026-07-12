@@ -184,6 +184,14 @@ const FIELD_DESCRIPTIONS: Readonly<Record<string, string>> = {
   joyRx: "右摇杆 X 轴输入",
   joyRy: "右摇杆 Y 轴输入",
   motorFaultMask: "四轮电机故障状态位掩码",
+  drvPidOut1: "ID1 右前轮向输出：DGM 目标速度命令；本项目轮向为 DGM 速度模式，没有 STM32 本地轮向 PID，故该值与驱动目标同源。",
+  drvPidOut2: "ID2 右后轮向输出：DGM 目标速度命令；用于判断控制侧给了多少轮向输出。",
+  drvPidOut3: "ID3 左前轮向输出：DGM 目标速度命令；用于判断控制侧给了多少轮向输出。",
+  drvPidOut4: "ID4 左后轮向输出：DGM 目标速度命令；用于判断控制侧给了多少轮向输出。",
+  steerPidOut1: "ID1 右前舵向速度环 PID output，最终发给 GM6020 的控制输出。",
+  steerPidOut2: "ID2 右后舵向速度环 PID output，最终发给 GM6020 的控制输出。",
+  steerPidOut3: "ID3 左前舵向速度环 PID output，最终发给 GM6020 的控制输出。",
+  steerPidOut4: "ID4 左后舵向速度环 PID output，最终发给 GM6020 的控制输出。",
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -253,21 +261,77 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   retry: "重试次数",
   status: "状态位",
   crcOk: "CRC 正常",
+  drvCmd1: "ID1 右前轮向目标",
+  drvCmd2: "ID2 右后轮向目标",
+  drvCmd3: "ID3 左前轮向目标",
+  drvCmd4: "ID4 左后轮向目标",
+  drvFb1: "ID1 右前轮向反馈",
+  drvFb2: "ID2 右后轮向反馈",
+  drvFb3: "ID3 左前轮向反馈",
+  drvFb4: "ID4 左后轮向反馈",
+  steerCmd1: "ID1 右前舵向目标",
+  steerCmd2: "ID2 右后舵向目标",
+  steerCmd3: "ID3 左前舵向目标",
+  steerCmd4: "ID4 左后舵向目标",
+  steerFb1: "ID1 右前舵向反馈",
+  steerFb2: "ID2 右后舵向反馈",
+  steerFb3: "ID3 左前舵向反馈",
+  steerFb4: "ID4 左后舵向反馈",
+  steerErr1: "ID1 右前舵向误差",
+  steerErr2: "ID2 右后舵向误差",
+  steerErr3: "ID3 左前舵向误差",
+  steerErr4: "ID4 左后舵向误差",
+  drvPidOut1: "ID1 右前轮向输出",
+  drvPidOut2: "ID2 右后轮向输出",
+  drvPidOut3: "ID3 左前轮向输出",
+  drvPidOut4: "ID4 左后轮向输出",
+  steerPidOut1: "ID1 右前舵向PID输出",
+  steerPidOut2: "ID2 右后舵向PID输出",
+  steerPidOut3: "ID3 左前舵向PID输出",
+  steerPidOut4: "ID4 左后舵向PID输出",
 };
 
 function leafName(path: string): string {
   return path.slice(path.lastIndexOf(".") + 1);
 }
 
+function motorFieldParts(path: string): { prefix: string; id: string; position: string } | null {
+  const match = /^(drvCmd|drvFb|drvPidOut|steerCmd|steerFb|steerErr|steerPidOut)([1-4])$/i.exec(leafName(path));
+  if (!match) return null;
+  const positions: Record<string, string> = {
+    "1": "ID1 右前", "2": "ID2 右后", "3": "ID3 左前", "4": "ID4 左后",
+  };
+  const id = match[2]!;
+  return { prefix: match[1]!, id, position: positions[id] ?? `ID${id}` };
+}
+
+function motorFieldLabel(path: string): string | null {
+  const motor = motorFieldParts(path);
+  if (!motor) return null;
+  const labels: Record<string, string> = {
+    drvCmd: "轮向目标",
+    drvFb: "轮向反馈",
+    drvPidOut: "轮向输出",
+    steerCmd: "舵向目标",
+    steerFb: "舵向反馈",
+    steerErr: "舵向误差",
+    steerPidOut: "舵向速度PID输出",
+  };
+  return `${motor.position}${labels[motor.prefix] ?? "电机字段"}`;
+}
+
 function inferredDescription(path: string): string {
   const leaf = leafName(path);
-  const motor = /^(drvCmd|drvFb|steerCmd|steerFb|steerErr)([1-4])$/.exec(leaf);
+  const motor = motorFieldParts(path);
   if (motor) {
     const meanings: Record<string, string> = {
-      drvCmd: "驱动电机目标值", drvFb: "驱动电机反馈值",
-      steerCmd: "转向电机目标值", steerFb: "转向电机反馈值", steerErr: "转向位置误差",
+      drvCmd: "轮向/DGM目标速度",
+      drvFb: "轮向/DGM速度反馈",
+      drvPidOut: "发给 DGM 速度环的输出指令；DGM 内部 PID output 本代码不可直接读取",
+      steerCmd: "舵向目标角", steerFb: "舵向角反馈", steerErr: "舵向位置误差",
+      steerPidOut: "舵向速度环 PID output，最终送入 GM6020 电压控制",
     };
-    return `${meanings[motor[1]!] ?? "电机字段"}（第 ${motor[2]} 轮）`;
+    return `${motor.position} · ${meanings[motor.prefix] ?? "电机字段"}。v4/159 按用户标注 ID 顺序输出；v3/旧固件可能仍是旧内部顺序。`;
   }
   if (/Count$/i.test(leaf)) return `${path} 的累计计数`;
   if (/AgeMs$|Ms$/i.test(leaf)) return `${path} 的时间或时延观测值`;
@@ -285,6 +349,9 @@ export function inferFieldUnit(path: string): string {
   if (/Rate$/i.test(leaf)) return "比例";
   if (/Ch$|Channel$/i.test(leaf)) return "信道";
   if (/Len$/i.test(leaf)) return "byte";
+  if (/^(?:drvCmd|drvFb|drvPidOut)[1-4]$/i.test(leaf)) return "r/s";
+  if (/^(?:steerCmd|steerFb|steerErr)[1-4]$/i.test(leaf)) return "°";
+  if (/^steerPidOut[1-4]$/i.test(leaf)) return "PID 输出";
   if (/Count$|failCount$|lost$|retry$/i.test(leaf)) return "次";
   if (/Score$/i.test(leaf)) return "分";
   if (/Valid$|Online$|Active$|Ready$|Present$|Seen$|crcOk$/i.test(leaf)) return "0/1";
@@ -306,7 +373,7 @@ export function describeSeries(id: SeriesId): SeriesDescription {
   const path = id.slice(separator + 1);
   const leaf = leafName(path);
   return {
-    label: FIELD_LABELS[path] ?? FIELD_LABELS[leaf] ?? path,
+    label: motorFieldLabel(path) ?? FIELD_LABELS[path] ?? FIELD_LABELS[leaf] ?? path,
     description: FIELD_DESCRIPTIONS[path] ?? FIELD_DESCRIPTIONS[leaf] ?? inferredDescription(path),
     sourceLabel: SOURCE_LABELS[source] ?? source,
     unit: inferFieldUnit(path),

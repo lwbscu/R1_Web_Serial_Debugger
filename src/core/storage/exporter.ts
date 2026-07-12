@@ -362,8 +362,11 @@ export function downloadVolume(volume: ExportedVolume): void {
   anchor.href = url;
   anchor.download = volume.filename;
   anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.append(anchor);
   anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /** Prevents spreadsheet formula execution while preserving the visible value. */

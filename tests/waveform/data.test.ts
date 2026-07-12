@@ -176,6 +176,22 @@ describe("字段中文提示", () => {
     expect(describeSeries("locator:dt35_2mm")).toMatchObject({ sourceLabel: "定位板 CSV / R1M", unit: "mm" });
   });
 
+  it("四轮字段按实车 ID 和位置标注", () => {
+    expect(describeSeries("chassis:drvCmd1")).toMatchObject({
+      label: "ID1 右前轮向目标",
+      unit: "r/s",
+    });
+    expect(describeSeries("chassis:drvFb4")).toMatchObject({
+      label: "ID4 左后轮向反馈",
+      unit: "r/s",
+    });
+    expect(describeSeries("chassis:steerPidOut3")).toMatchObject({
+      label: "ID3 左前舵向速度PID输出",
+      unit: "PID 输出",
+    });
+    expect(describeSeries("chassis:drvPidOut3").description).toContain("ID3 左前");
+  });
+
   it("未知字段也返回可展示的中文后备说明", () => {
     expect(describeSeries("chassis:customAgeMs")).toMatchObject({ sourceLabel: "底盘 CDBG", unit: "ms" });
     expect(describeSeries("chassis:customAgeMs").description).toContain("时间或时延");

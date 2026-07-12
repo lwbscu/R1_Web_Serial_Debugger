@@ -22,6 +22,7 @@ const ROLE_SUBTITLES: Record<SourceRole, string> = {
 };
 
 const ORDER: SourceRole[] = ["remote", "chassis", "locator"];
+const CONNECTION_STATUS_HEADER = "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error\r\n";
 
 const HEALTH_TEXT: Record<PortSnapshot["health"] | "unlinked", string> = {
   unlinked: "未链接",
@@ -111,6 +112,7 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
     if (!wasActive.current) {
       lastKeys.current = { remote: null, chassis: null, locator: null };
       wasActive.current = true;
+      void recorder.append("connection_status.csv", CONNECTION_STATUS_HEADER);
     }
     for (const role of ORDER) {
       const snapshot = snapshots[role];
@@ -123,7 +125,6 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
 
   const startRecording = useCallback(async () => {
     await recorder.start({ locatorCoordinates });
-    void recorder.append("connection_status.csv", "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error\r\n");
   }, [locatorCoordinates, recorder]);
 
   const recordingLabel = recorder.starting ? "正在开始录制" : recorder.stopping ? "正在停止录制" : recorder.active ? "停止并后台下载" : "开始三串口录制";

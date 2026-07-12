@@ -334,6 +334,36 @@ describe("session export", () => {
     expect(JSON.parse(decoder.decode(entries["session.json"]!)).export.quickExport).toBe("quick-zip-v1");
   });
 
+  it("coalesces adjacent quick ZIP manifest chunks for long-running recordings", async () => {
+    const store = new ReadCountingStore();
+    const quickManifest = {
+      ...manifest("global"),
+      recordingProfile: "quickSerial" as const,
+    };
+    const recorder = await SessionRecorder.create(store, quickManifest);
+    await recorder.append("remote_raw.log", "RDBG-1\n", 1);
+    await recorder.append("remote_raw.log", "RDBG-2\n", 2);
+    await recorder.append("remote_raw.log", "RDBG-3\n", 3);
+
+    const parsed = JSON.parse(decoder.decode(await store.read(quickExportPaths.quickExportPath(quickManifest.sessionId)))) as {
+      entries: Array<{ name: string; sizeBytes: number; chunks: Array<{ path: string; offset: number; length: number }> }>;
+    };
+    const remote = parsed.entries.find((entry) => entry.name === "remote_raw.log");
+    expect(remote?.sizeBytes).toBe("RDBG-1\nRDBG-2\nRDBG-3\n".length);
+    expect(remote?.chunks).toEqual([{
+      path: "sessions/global-test/segments/000000/remote_raw.log",
+      offset: 0,
+      length: "RDBG-1\nRDBG-2\nRDBG-3\n".length,
+    }]);
+
+    await recorder.stop(4);
+    store.segmentReads = 0;
+    const [volume] = await exportSession(store, quickManifest.sessionId, { compressionLevel: 0 });
+    expect(store.segmentReads).toBe(0);
+    const entries = unzipSync(await volumeBytes(volume!));
+    expect(decoder.decode(entries["remote_raw.log"]!)).toBe("RDBG-1\nRDBG-2\nRDBG-3\n");
+  });
+
   it("falls back to legacy export when a quick ZIP manifest is missing", async () => {
     const store = new ReadCountingStore();
     const quickManifest = {

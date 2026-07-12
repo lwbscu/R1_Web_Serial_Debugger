@@ -195,11 +195,16 @@ export async function appendQuickExportChunks(
     entry.sizeBytes += bytes.byteLength;
     entry.firstObservedAtMs = Math.min(entry.firstObservedAtMs ?? chunk.observedAtMs, chunk.observedAtMs);
     entry.lastObservedAtMs = Math.max(entry.lastObservedAtMs ?? chunk.observedAtMs, chunk.observedAtMs);
-    entry.chunks.push({
-      path: chunk.path,
-      offset: chunk.offset,
-      length: bytes.byteLength,
-    });
+    const previous = entry.chunks.at(-1);
+    if (previous && previous.path === chunk.path && previous.offset + previous.length === chunk.offset) {
+      previous.length += bytes.byteLength;
+    } else {
+      entry.chunks.push({
+        path: chunk.path,
+        offset: chunk.offset,
+        length: bytes.byteLength,
+      });
+    }
   }
 
   quickManifest.status = "recording";
