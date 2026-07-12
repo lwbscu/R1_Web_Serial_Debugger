@@ -144,7 +144,7 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
         <button type="button" className={recorder.profile === "quickSerial" ? "selected" : "secondary"} disabled={modeLocked} aria-pressed={recorder.profile === "quickSerial"} onClick={() => recorder.setProfile("quickSerial")}>快速串口包</button>
         <button type="button" className={recorder.profile === "full" ? "selected" : "secondary"} disabled={modeLocked} aria-pressed={recorder.profile === "full"} onClick={() => recorder.setProfile("full")}>完整诊断包</button>
       </div>
-      <p className="recording-profile-hint">{recorder.profile === "quickSerial" ? "仅保存三路原始串口和连接状态，ZIP 内附 Codex 说明。" : "保存原始串口、解析 CSV、事件和诊断派生数据。"}</p>
+      <p className="recording-profile-hint">{recorder.profile === "quickSerial" ? "录制期间预生成快速 ZIP，仅保存三路原始串口和连接状态。" : "保存原始串口、解析 CSV、事件和诊断派生数据。"}</p>
       <div className="serial-role-list">
         {ORDER.map((role) => {
           const roleState = state.roles[role];

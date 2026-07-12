@@ -6,6 +6,7 @@ export interface SessionFileStore {
   write(path: string, data: StoredData): Promise<void>;
   append(path: string, data: StoredData): Promise<void>;
   read(path: string): Promise<Uint8Array>;
+  readBlob(path: string): Promise<Blob>;
   exists(path: string): Promise<boolean>;
   list(prefix: string): Promise<string[]>;
   remove(prefix: string): Promise<void>;
@@ -44,6 +45,12 @@ export class MemoryFileStore implements SessionFileStore {
     const value = this.files.get(normalizedParts(path).join("/"));
     if (!value) throw new Error(`Storage object not found: ${path}`);
     return value.slice();
+  }
+
+  async readBlob(path: string): Promise<Blob> {
+    const value = this.files.get(normalizedParts(path).join("/"));
+    if (!value) throw new Error(`Storage object not found: ${path}`);
+    return new Blob([value.slice() as BlobPart]);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -108,6 +115,10 @@ export class OpfsFileStore implements SessionFileStore {
   async read(path: string): Promise<Uint8Array> {
     const file = await (await this.getFileHandle(path, false)).getFile();
     return new Uint8Array(await file.arrayBuffer());
+  }
+
+  async readBlob(path: string): Promise<Blob> {
+    return (await this.getFileHandle(path, false)).getFile();
   }
 
   async exists(path: string): Promise<boolean> {

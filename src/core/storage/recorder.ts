@@ -10,6 +10,11 @@ import {
   isArtifactForKind,
 } from "./types";
 import { readCheckpoint } from "./repository";
+import {
+  appendQuickExportChunks,
+  createQuickExportManifest,
+  type QuickExportAppendChunk,
+} from "./quickExport";
 
 const textDecoder = new TextDecoder();
 
@@ -103,6 +108,7 @@ export class SessionRecorder {
     const serialized = JSON.stringify(checkpoint, null, 2);
     await store.write(`${root}/checkpoint.recovery.json`, serialized);
     await store.write(`${root}/checkpoint.json`, serialized);
+    await createQuickExportManifest(store, manifest, startedAtMs);
     return new SessionRecorder(store, manifest, checkpoint, options);
   }
 
@@ -162,6 +168,7 @@ export class SessionRecorder {
         }
       }
 
+      const quickChunks: QuickExportAppendChunk[] = [];
       const writeSlice = async (
         target: StoredSegment,
         artifact: RecordingArtifact,
@@ -169,8 +176,8 @@ export class SessionRecorder {
         slice: Uint8Array,
       ): Promise<void> => {
         const path = segmentPath(this.manifest.sessionId, target.index, artifact);
-        await this.store.append(path, slice);
         const previousSize = target.artifacts[artifact]?.sizeBytes ?? 0;
+        await this.store.append(path, slice);
         target.artifacts[artifact] = {
           name: artifact,
           path,
@@ -178,6 +185,7 @@ export class SessionRecorder {
         };
         target.sizeBytes += slice.byteLength;
         target.endedAtMs = Math.max(target.endedAtMs, observedAtMs);
+        quickChunks.push({ artifact, data: slice, path, offset: previousSize, observedAtMs });
       };
 
       let changed = false;
@@ -219,6 +227,7 @@ export class SessionRecorder {
       if (!changed) return;
       this.checkpoint.updatedAtMs = lastObservedAtMs;
       await this.persistCheckpoint();
+      await appendQuickExportChunks(this.store, this.manifest, quickChunks, lastObservedAtMs).catch(() => undefined);
     });
   }
 

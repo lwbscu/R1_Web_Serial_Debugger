@@ -9,7 +9,7 @@ interface WorkerProgressMessage {
 interface WorkerVolumeMessage {
   type: "volume";
   jobId: string;
-  volume: Omit<ExportedVolume, "bytes"> & { bytes: ArrayBuffer };
+  volume: Omit<ExportedVolume, "bytes"> & { bytes?: ArrayBuffer; blob?: Blob };
 }
 
 interface WorkerDoneMessage {
@@ -70,9 +70,10 @@ export async function* exportSessionVolumesInWorker(
       return;
     }
     if (message.type === "volume") {
+      const bytes = message.volume.blob ?? (message.volume.bytes ? new Uint8Array(message.volume.bytes) : new Uint8Array());
       push({
         ...message.volume,
-        bytes: new Uint8Array(message.volume.bytes),
+        bytes,
       });
       return;
     }

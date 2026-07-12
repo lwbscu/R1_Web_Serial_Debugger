@@ -23,7 +23,9 @@ type ExportWorkerResponse =
       total: number;
       firstObservedAtMs: number;
       lastObservedAtMs: number;
-      bytes: ArrayBuffer;
+      bytes?: ArrayBuffer;
+      blob?: Blob;
+      sizeBytes: number;
     };
   }
   | { type: "done"; jobId: string }
@@ -40,6 +42,10 @@ function transferableBytes(bytes: Uint8Array): Uint8Array {
   return bytes.slice();
 }
 
+function isBlob(value: Uint8Array | Blob): value is Blob {
+  return typeof Blob !== "undefined" && value instanceof Blob;
+}
+
 worker.onmessage = (event: MessageEvent<ExportWorkerRequest>) => {
   const request = event.data;
   if (request.type !== "export") return;
@@ -54,19 +60,36 @@ async function runExport(request: ExportWorkerRequest): Promise<void> {
       compressionLevel: request.compressionLevel,
       onProgress: (progress) => post({ type: "progress", jobId: request.jobId, progress }),
     })) {
-      const bytes = transferableBytes(volume.bytes);
-      post({
-        type: "volume",
-        jobId: request.jobId,
-        volume: {
-          filename: volume.filename,
-          index: volume.index,
-          total: volume.total,
-          firstObservedAtMs: volume.firstObservedAtMs,
-          lastObservedAtMs: volume.lastObservedAtMs,
-          bytes: bytes.buffer,
-        },
-      }, [bytes.buffer]);
+      if (isBlob(volume.bytes)) {
+        post({
+          type: "volume",
+          jobId: request.jobId,
+          volume: {
+            filename: volume.filename,
+            index: volume.index,
+            total: volume.total,
+            firstObservedAtMs: volume.firstObservedAtMs,
+            lastObservedAtMs: volume.lastObservedAtMs,
+            blob: volume.bytes,
+            sizeBytes: volume.sizeBytes,
+          },
+        });
+      } else {
+        const bytes = transferableBytes(volume.bytes);
+        post({
+          type: "volume",
+          jobId: request.jobId,
+          volume: {
+            filename: volume.filename,
+            index: volume.index,
+            total: volume.total,
+            firstObservedAtMs: volume.firstObservedAtMs,
+            lastObservedAtMs: volume.lastObservedAtMs,
+            bytes: bytes.buffer,
+            sizeBytes: volume.sizeBytes,
+          },
+        }, [bytes.buffer]);
+      }
     }
     post({ type: "done", jobId: request.jobId });
   } catch (reason) {

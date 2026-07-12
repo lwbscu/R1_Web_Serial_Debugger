@@ -327,7 +327,7 @@ export function useRecorder(kind: RecordingKind): RecorderController {
         total: volume.total,
         percent: Math.round((volume.index / volume.total) * 100),
         label: `正在触发浏览器下载 ${volume.index}/${volume.total}`,
-        detail: `${volume.filename} · ${formatBytes(volume.bytes.byteLength)}${exportQueueRef.current.length > 0 ? ` · 队列剩余 ${exportQueueRef.current.length}` : ""}`,
+        detail: `${volume.filename} · ${formatBytes(volume.sizeBytes)}${exportQueueRef.current.length > 0 ? ` · 队列剩余 ${exportQueueRef.current.length}` : ""}`,
       });
       await waitForPaint();
       downloadVolume(volume);

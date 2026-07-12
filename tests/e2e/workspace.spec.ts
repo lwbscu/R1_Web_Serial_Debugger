@@ -215,7 +215,7 @@ test("stops and downloads a 31 second mock serial recording without blocking the
   await page.getByRole("button", { name: "开始三串口录制", exact: true }).click();
   await expect(page.getByRole("button", { name: /正在开始录制|停止并后台下载/ })).toBeVisible({ timeout: 1_000 });
   const communicationStatus = page.getByRole("status").filter({ hasText: "后台生成下载" });
-  await expect(communicationStatus).toContainText(/后台落盘旧录制|后台写入关闭检查点|后台导出已入队|后台压缩 ZIP|下载已触发/);
+  await expect(communicationStatus).toContainText(/后台落盘旧录制|后台写入关闭检查点|后台导出已入队|后台打包 ZIP|ZIP 已生成|下载已触发/);
   expect((await download).suggestedFilename()).toMatch(/^global_/);
   await expect(communicationStatus).toContainText("100%", { timeout: 120_000 });
 });

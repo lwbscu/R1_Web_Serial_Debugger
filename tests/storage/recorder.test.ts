@@ -4,15 +4,22 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryFileStore,
   SessionRecorder,
+  crc32,
   deleteSession,
   encodeCsvRow,
   exportSession,
   exportSessionVolumes,
   listRecoverableSessions,
+  quickExportPaths,
 } from "../../src/core/storage";
 import { contextForSide } from "../../src/core/locator";
 
 const decoder = new TextDecoder();
+
+async function volumeBytes(volume: { bytes: Uint8Array | Blob }): Promise<Uint8Array> {
+  if (volume.bytes instanceof Blob) return new Uint8Array(await volume.bytes.arrayBuffer());
+  return volume.bytes;
+}
 
 function manifest(kind: "communication" | "locator" | "global" = "communication") {
   return {
@@ -29,6 +36,15 @@ class CountingStore extends MemoryFileStore {
   override async write(path: string, data: string | Uint8Array): Promise<void> {
     if (/checkpoint(?:\.recovery)?\.json$/.test(path)) this.checkpointWrites += 1;
     await super.write(path, data);
+  }
+}
+
+class ReadCountingStore extends MemoryFileStore {
+  segmentReads = 0;
+
+  override async read(path: string): Promise<Uint8Array> {
+    if (path.includes("/segments/")) this.segmentReads += 1;
+    return super.read(path);
   }
 }
 
@@ -134,7 +150,7 @@ describe("session export", () => {
       "communication-test_part001_of_002.zip",
       "communication-test_part002_of_002.zip",
     ]);
-    const first = unzipSync(volumes[0]!.bytes);
+    const first = unzipSync(await volumeBytes(volumes[0]!));
     expect(Object.keys(first).sort()).toEqual([
       "README_Codex.md",
       "chassis_cdbg.csv",
@@ -153,6 +169,10 @@ describe("session export", () => {
 
   it("neutralizes formulas and quotes CSV fields", () => {
     expect(encodeCsvRow(["=cmd()", "a,b", 'a"b'])).toBe("'=cmd(),\"a,b\",\"a\"\"b\"\r\n");
+  });
+
+  it("computes CRC32 for prepared ZIP entries", () => {
+    expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
   });
 
   it("yields export volumes one at a time", async () => {
@@ -221,7 +241,7 @@ describe("session export", () => {
       "ready:100:0/0",
       "done:100:0/0",
     ]);
-    const entries = unzipSync(volumes[0]!.bytes);
+    const entries = unzipSync(await volumeBytes(volumes[0]!));
     expect(JSON.parse(decoder.decode(entries["session.json"]!)).sessionId).toBe("communication-test");
   });
 
@@ -235,7 +255,7 @@ describe("session export", () => {
     await recorder.append("display_frames.csv", "x,y,yaw\n0,0,0\n", 1);
     await recorder.stop(2);
     const [volume] = await exportSession(store, locatorManifest.sessionId);
-    const entries = unzipSync(volume!.bytes);
+    const entries = unzipSync(await volumeBytes(volume!));
     const metadata = JSON.parse(decoder.decode(entries["metadata.json"]!));
     expect(metadata.locatorCoordinates).toEqual(locatorManifest.locatorCoordinates);
   });
@@ -259,7 +279,7 @@ describe("session export", () => {
     await recorder.stop(4);
 
     const [volume] = await exportSession(store, globalManifest.sessionId, { compressionLevel: 0 });
-    const entries = unzipSync(volume!.bytes);
+    const entries = unzipSync(await volumeBytes(volume!));
     expect(Object.keys(entries).sort()).toEqual([
       "README_Codex.md",
       "chassis_cdbg.csv",
@@ -282,7 +302,7 @@ describe("session export", () => {
   });
 
   it("exports quick serial packages without derived CSV artifacts", async () => {
-    const store = new MemoryFileStore();
+    const store = new ReadCountingStore();
     const quickManifest = {
       ...manifest("global"),
       recordingProfile: "quickSerial" as const,
@@ -297,8 +317,11 @@ describe("session export", () => {
     await recorder.append("connection_status.csv", encodeCsvRow([1, "remote", "connected"]));
     await recorder.stop(4);
 
+    store.segmentReads = 0;
     const [volume] = await exportSession(store, quickManifest.sessionId, { compressionLevel: 0 });
-    const entries = unzipSync(volume!.bytes);
+    expect(store.segmentReads).toBe(0);
+    expect(volume?.bytes).toBeInstanceOf(Blob);
+    const entries = unzipSync(await volumeBytes(volume!));
     expect(Object.keys(entries).sort()).toEqual([
       "README_Codex.md",
       "chassis_raw.log",
@@ -308,5 +331,26 @@ describe("session export", () => {
       "session.json",
     ]);
     expect(decoder.decode(entries["README_Codex.md"]!)).toContain("快速串口包只保存原始串口数据");
+    expect(JSON.parse(decoder.decode(entries["session.json"]!)).export.quickExport).toBe("quick-zip-v1");
+  });
+
+  it("falls back to legacy export when a quick ZIP manifest is missing", async () => {
+    const store = new ReadCountingStore();
+    const quickManifest = {
+      ...manifest("global"),
+      recordingProfile: "quickSerial" as const,
+    };
+    const recorder = await SessionRecorder.create(store, quickManifest);
+    await recorder.append("remote_raw.log", "100,RDBG,...\n", 1);
+    await recorder.append("chassis_raw.log", "101,CDBG,...\n", 2);
+    await recorder.append("locator_raw.log", "[0.1] $R1M,...\n", 3);
+    await recorder.stop(4);
+    await store.remove(quickExportPaths.quickExportPath(quickManifest.sessionId));
+
+    store.segmentReads = 0;
+    const [volume] = await exportSession(store, quickManifest.sessionId, { compressionLevel: 0 });
+    expect(store.segmentReads).toBeGreaterThan(0);
+    const entries = unzipSync(await volumeBytes(volume!));
+    expect(decoder.decode(entries["remote_raw.log"]!)).toContain("RDBG");
   });
 });

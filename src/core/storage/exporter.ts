@@ -1,6 +1,7 @@
 import { AsyncZipDeflate, Zip, ZipPassThrough } from "fflate";
 
 import type { SessionFileStore } from "./fileStore";
+import { prepareQuickSerialExport, readPreparedQuickSerialVolume } from "./quickExport";
 import { readSession } from "./repository";
 import {
   DEFAULT_MAX_ZIP_VOLUME_BYTES,
@@ -16,7 +17,8 @@ export interface ExportedVolume {
   total: number;
   firstObservedAtMs: number;
   lastObservedAtMs: number;
-  bytes: Uint8Array;
+  bytes: Uint8Array | Blob;
+  sizeBytes: number;
 }
 
 export interface ExportSessionOptions {
@@ -257,6 +259,42 @@ export async function* exportSessionVolumes(
   options: ExportSessionOptions = {},
 ): AsyncGenerator<ExportedVolume, void, void> {
   const { manifest, checkpoint } = await readSession(store, sessionId);
+  if (manifest.recordingProfile === "quickSerial") {
+    try {
+      await prepareQuickSerialExport(store, sessionId);
+      const prepared = await readPreparedQuickSerialVolume(store, sessionId);
+      if (prepared) {
+        const report = async (phase: ExportSessionProgressPhase, filename?: string): Promise<void> => {
+          await options.onProgress?.({
+            phase,
+            sessionId,
+            volumeIndex: 1,
+            volumeTotal: 1,
+            bytesRead: prepared.sizeBytes,
+            totalBytes: prepared.sizeBytes,
+            percent: 100,
+            filename,
+          });
+        };
+        await report("reading");
+        await report("compressing");
+        await report("ready", prepared.filename);
+        yield {
+          filename: prepared.filename,
+          index: 1,
+          total: 1,
+          firstObservedAtMs: prepared.firstObservedAtMs,
+          lastObservedAtMs: prepared.lastObservedAtMs,
+          bytes: prepared.blob,
+          sizeBytes: prepared.sizeBytes,
+        };
+        await report("done");
+        return;
+      }
+    } catch {
+      // A missing or stale quick manifest falls back to the established export path.
+    }
+  }
   const maxVolumeBytes = options.maxVolumeBytes ?? DEFAULT_MAX_ZIP_VOLUME_BYTES;
   const groups = groupSegments(checkpoint.segments, maxVolumeBytes);
   const width = Math.max(3, String(groups.length).length);
@@ -308,6 +346,7 @@ export async function* exportSessionVolumes(
       firstObservedAtMs: segments[0]?.startedAtMs ?? checkpoint.startedAtMs,
       lastObservedAtMs: segments.at(-1)?.endedAtMs ?? checkpoint.updatedAtMs,
       bytes,
+      sizeBytes: bytes.byteLength,
     };
   }
   await report("done", groups.length - 1);
@@ -315,7 +354,9 @@ export async function* exportSessionVolumes(
 
 /** Starts an ordinary browser download; the browser owns the destination path. */
 export function downloadVolume(volume: ExportedVolume): void {
-  const blob = new Blob([volume.bytes as BlobPart], { type: "application/zip" });
+  const blob = volume.bytes instanceof Blob
+    ? volume.bytes
+    : new Blob([volume.bytes as BlobPart], { type: "application/zip" });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
