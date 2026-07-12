@@ -14,6 +14,7 @@ import {
   FIELD_RECTANGLES,
   FIELD_SEGMENTS,
   FIELD_WIDTH_CM,
+  NINE_GONG_START_POSES,
   bodyToWorld,
   canvasToWorld,
   computeDt35Ray,
@@ -26,11 +27,12 @@ import {
   type Dt35Ray,
   type FieldSegment,
   type MapViewport,
+  type NineGongStartPose,
   type Point,
 } from "./geometry";
 
 export interface MapTrails { final: LocatorFrame[]; calib: LocatorFrame[]; lidar: LocatorFrame[] }
-export type MapLayer = "pos" | "calib" | "lidar" | "dt35" | "field_model" | "grid" | "axes";
+export type MapLayer = "pos" | "calib" | "lidar" | "dt35" | "field_model" | "nine_gong_start" | "grid" | "axes";
 
 export interface FieldMapProps {
   frame: LocatorFrame | null;
@@ -43,10 +45,10 @@ export interface FieldMapProps {
 
 const MAP_ASSET = "/assets/map/field_prior_map_clean_labeled_1215x1210cm.png";
 const ROBOT_ASSET = "/assets/map/r1_chassis_830mm_texture_1024.png";
-const ALL_LAYERS: readonly MapLayer[] = ["pos", "calib", "lidar", "dt35", "field_model", "grid", "axes"];
+const ALL_LAYERS: readonly MapLayer[] = ["pos", "calib", "lidar", "dt35", "field_model", "nine_gong_start", "grid", "axes"];
 const LAYER_LABELS: Record<MapLayer, string> = {
   pos: "Final", calib: "Calib", lidar: "LiDAR", dt35: "DT35",
-  field_model: "场地模型", grid: "网格", axes: "坐标轴",
+  field_model: "场地模型", nine_gong_start: "9gong 起点", grid: "网格", axes: "坐标轴",
 };
 
 const overlayStyle: CSSProperties = {
@@ -94,6 +96,94 @@ function rayStyle(ray: Dt35Ray): { color: string; dashed: boolean } {
   if (ray.state === "ignored") return { color: "#b08cff", dashed: false };
   if (ray.state === "large_residual") return { color: "#ffcc33", dashed: false };
   return { color: "#00ffaa", dashed: false };
+}
+
+function drawCanvasArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, color: string): void {
+  const angle = Math.atan2(to.y - from.y, to.x - from.x);
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(to.x, to.y);
+  ctx.lineTo(to.x - 8 * Math.cos(angle - Math.PI / 6), to.y - 8 * Math.sin(angle - Math.PI / 6));
+  ctx.lineTo(to.x - 8 * Math.cos(angle + Math.PI / 6), to.y - 8 * Math.sin(angle + Math.PI / 6));
+  ctx.closePath();
+  ctx.fill();
+}
+
+function poseLocalPoint(world: Point, pose: NineGongStartPose | { x: number; y: number; yawDeg: number }): Point {
+  const yaw = pose.yawDeg * Math.PI / 180;
+  const dx = world.x - pose.x;
+  const dy = world.y - pose.y;
+  return {
+    x: dx * Math.cos(yaw) - dy * Math.sin(yaw),
+    y: dx * Math.sin(yaw) + dy * Math.cos(yaw),
+  };
+}
+
+function nineGongTooltip(pose: NineGongStartPose): string {
+  return [
+    pose.label,
+    `中心 x=${pose.x.toFixed(1)} cm · y=${pose.y.toFixed(1)} cm`,
+    `yaw=${pose.yawDeg.toFixed(1)}° · +Y 为车头前方`,
+    `距侧边界 ${pose.sideBoundaryDistanceCm.toFixed(1)} cm · 距九宫下边界 ${pose.lowerBoundaryDistanceCm.toFixed(1)} cm`,
+    "仅显示起始点，不参与定位/DT35/录制诊断",
+  ].join("\n");
+}
+
+function drawNineGongStartPoses(ctx: CanvasRenderingContext2D, view: MapViewport): void {
+  for (const pose of NINE_GONG_START_POSES) {
+    const center = worldToCanvas(pose, view);
+    const corners = [[-41.5, -41.5], [41.5, -41.5], [41.5, 41.5], [-41.5, 41.5]] as const;
+    const stroke = pose.side === "red" ? "#ff6b6b" : "#4dabf7";
+    const fill = pose.side === "red" ? "rgba(255,107,107,.14)" : "rgba(77,171,247,.14)";
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = stroke;
+    ctx.fillStyle = fill;
+    ctx.setLineDash([8, 5]);
+    ctx.beginPath();
+    corners.forEach(([x, y], index) => {
+      const point = worldToCanvas(bodyToWorld(pose, x, y), view);
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.lineWidth = 2.2;
+    drawCanvasArrow(ctx, center, worldToCanvas(bodyToWorld(pose, 45.65, 0), view), "#ff8a8a");
+    drawCanvasArrow(ctx, center, worldToCanvas(bodyToWorld(pose, 0, 62.25), view), "#00ffaa");
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#10151c";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = "12px ui-monospace, Consolas, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0,0,0,.75)";
+    ctx.strokeText(pose.side === "red" ? "红 9gong" : "蓝 9gong", center.x, center.y - 50);
+    ctx.fillStyle = stroke;
+    ctx.fillText(pose.side === "red" ? "红 9gong" : "蓝 9gong", center.x, center.y - 50);
+    ctx.font = "11px ui-monospace, Consolas, monospace";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    const front = worldToCanvas(bodyToWorld(pose, 0, 62.25), view);
+    const right = worldToCanvas(bodyToWorld(pose, 45.65, 0), view);
+    ctx.fillStyle = "#00ffaa";
+    ctx.fillText("+Y 车头", front.x + 4, front.y);
+    ctx.fillStyle = "#ff8a8a";
+    ctx.fillText("+X", right.x + 4, right.y);
+    ctx.restore();
+  }
 }
 
 function filteredTrail(
@@ -159,6 +249,7 @@ function featureAt(
   localFrame: LocatorFrame | null,
   trails: MapTrails,
   coordinateContext: LocatorCoordinateContext,
+  showNineGongStart: boolean,
 ): string | null {
   const thresholdCm = 10 / (fitScale(view) * view.zoom);
   for (const ray of rays) {
@@ -193,6 +284,18 @@ function featureAt(
       const fieldPoint = localToField({ x: trailFrame[xKey], y: trailFrame[yKey] }, coordinateContext);
       if (Math.hypot(world.x - fieldPoint.x, world.y - fieldPoint.y) <= thresholdCm) {
         return `${label} 轨迹\n相对 X ${trailFrame[xKey].toFixed(2)} cm · Y ${trailFrame[yKey].toFixed(2)} cm`;
+      }
+    }
+  }
+  if (showNineGongStart) {
+    for (const pose of [...NINE_GONG_START_POSES].reverse()) {
+      const local = poseLocalPoint(world, pose);
+      const nearAxis = Math.min(
+        distanceToSegment(world, pose, bodyToWorld(pose, 45.65, 0)),
+        distanceToSegment(world, pose, bodyToWorld(pose, 0, 62.25)),
+      ) <= thresholdCm;
+      if ((Math.abs(local.x) <= 41.5 && Math.abs(local.y) <= 41.5) || nearAxis) {
+        return nineGongTooltip(pose);
       }
     }
   }
@@ -285,6 +388,7 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
       ctx.strokeStyle = "#4dabf7"; ctx.beginPath(); ctx.moveTo(y0.x, y0.y); ctx.lineTo(y1.x, y1.y); ctx.stroke();
     }
     if (layers.field_model) drawFieldModel(ctx, viewport);
+    if (layers.nine_gong_start) drawNineGongStartPoses(ctx, viewport);
     if (layers.pos) drawPolyline(ctx, trails.final, viewport, "posXcm", "posYcm", "rgba(0,255,170,.82)", coordinateContext);
     if (layers.calib) drawPolyline(ctx, trails.calib, viewport, "calibXcm", "calibYcm", "rgba(255,192,0,.72)", coordinateContext);
     if (layers.lidar) drawPolyline(ctx, trails.lidar, viewport, "lidarXcm", "lidarYcm", "rgba(70,160,255,.76)", coordinateContext, true);
@@ -354,7 +458,7 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
     const fieldPoint = canvasToWorld(point, viewport);
     const localPoint = fieldToLocal(fieldPoint, coordinateContext);
     onMousePositionChange?.(localPoint);
-    setHover({ ...point, world: localPoint, detail: featureAt(fieldPoint, viewport, layers.dt35 ? raysRef.current : [], fieldFrame, frame, trails, coordinateContext) });
+    setHover({ ...point, world: localPoint, detail: featureAt(fieldPoint, viewport, layers.dt35 ? raysRef.current : [], fieldFrame, frame, trails, coordinateContext, layers.nine_gong_start) });
   };
   const endPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
