@@ -13,6 +13,7 @@ function gitCommit(): string {
 
 const commit = gitCommit();
 const builtAt = process.env.VITE_BUILD_TIME ?? new Date().toISOString();
+let versionManifestEmitted = false;
 
 export default defineConfig({
   plugins: [react()],
@@ -25,6 +26,8 @@ export default defineConfig({
       plugins: [{
         name: "r1-version-manifest",
         generateBundle() {
+          if (versionManifestEmitted) return;
+          versionManifestEmitted = true;
           this.emitFile({
             type: "asset",
             fileName: "version.json",

@@ -177,10 +177,13 @@ test("shows progress while stopping and downloading a local recording", async ({
   await page.goto("/");
 
   await page.getByRole("button", { name: "开始三串口录制" }).click();
-  await expect(page.getByRole("button", { name: "停止并下载" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "停止并后台下载" })).toBeVisible();
   const communicationDownload = page.waitForEvent("download");
-  await page.getByRole("button", { name: "停止并下载" }).click();
-  const communicationStatus = page.getByRole("status").filter({ hasText: "录制下载" });
+  await page.getByRole("button", { name: "停止并后台下载" }).click();
+  await expect(page.getByRole("button", { name: "开始三串口录制" })).toBeVisible();
+  await page.getByRole("button", { name: "开始三串口录制" }).click();
+  await expect(page.getByRole("button", { name: "停止并后台下载" })).toBeVisible();
+  const communicationStatus = page.getByRole("status").filter({ hasText: "后台生成下载" });
   await expect(communicationStatus).toBeVisible();
   await expect(communicationStatus.getByRole("progressbar", { name: "录制下载进度" })).toBeVisible();
   await expect(communicationStatus).toContainText("100%");

@@ -182,7 +182,7 @@ export function LocatorWorkspace({
 
   const openReplay = async (file: File) => {
     try {
-      if (recorder.active || recorder.exporting) throw new Error("录制期间不能加载回放或改变阵营，请先停止并下载当前录制。");
+      if (recorder.active || recorder.stopping) throw new Error("录制期间不能加载回放或改变阵营，请先停止并下载当前录制。");
       if (port.snapshot.lifecycle === "reading") throw new Error("请先断开定位串口，再加载回放文件。");
       stopDemo();
       clockRef.current?.stop();
@@ -235,7 +235,7 @@ export function LocatorWorkspace({
   const exportSnapshot = () => downloadText(`r1-locator-state-${Date.now()}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), frame, mouse, renderContext: coordinateContext, replay }, null, 2), "application/json;charset=utf-8");
   const resetViewData = () => { setTrails(EMPTY_TRAILS); setFrame(null); };
   const serialBusy = port.snapshot.lifecycle === "reading";
-  const startSelectionLocked = recorder.active || recorder.exporting;
+  const startSelectionLocked = recorder.active || recorder.stopping;
   const visibleLogs = rawPaused ? frozenLogs.current ?? logs : logs;
   const toggleRawPause = () => {
     if (rawPaused) frozenLogs.current = null;

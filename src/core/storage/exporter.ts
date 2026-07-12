@@ -1,4 +1,4 @@
-import { zipSync } from "fflate";
+import { AsyncZipDeflate, Zip, ZipPassThrough } from "fflate";
 
 import type { SessionFileStore } from "./fileStore";
 import { readSession } from "./repository";
@@ -49,6 +49,10 @@ function concatenate(parts: Uint8Array[]): Uint8Array {
     offset += part.byteLength;
   }
   return output;
+}
+
+function zipCompressionLevel(level: ExportSessionOptions["compressionLevel"]): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 {
+  return level ?? 6;
 }
 
 function groupSegments(segments: StoredSegment[], maxVolumeBytes: number): StoredSegment[][] {
@@ -107,6 +111,71 @@ function progressPercent(bytesRead: number, totalBytes: number, phase: ExportSes
   return Math.min(100, Math.max(0, (bytesRead / totalBytes) * 100));
 }
 
+function addZipFile(zip: Zip, name: string, bytes: Uint8Array, level: ExportSessionOptions["compressionLevel"]): void {
+  if (zipCompressionLevel(level) === 0) {
+    const file = new ZipPassThrough(name);
+    zip.add(file);
+    file.push(bytes, true);
+    return;
+  }
+  const file = new AsyncZipDeflate(name, { level: zipCompressionLevel(level) });
+  zip.add(file);
+  file.push(bytes, true);
+}
+
+async function buildZipVolume(
+  store: SessionFileStore,
+  manifest: SessionManifest,
+  metadataName: RecordingArtifact,
+  segments: readonly StoredSegment[],
+  metadata: Uint8Array,
+  compressionLevel: ExportSessionOptions["compressionLevel"],
+  onBytesRead: (bytes: number) => Promise<void>,
+  onCompressing: () => Promise<void>,
+): Promise<Uint8Array> {
+  const outputChunks: Uint8Array[] = [];
+  let resolveDone: (value: Uint8Array) => void = () => undefined;
+  let rejectDone: (reason: unknown) => void = () => undefined;
+  const done = new Promise<Uint8Array>((resolve, reject) => {
+    resolveDone = resolve;
+    rejectDone = reject;
+  });
+  const archive = new Zip((error, chunk, final) => {
+    if (error) {
+      rejectDone(error);
+      return;
+    }
+    if (chunk) outputChunks.push(chunk);
+    if (final) resolveDone(concatenate(outputChunks));
+  });
+
+  try {
+    for (const artifact of expectedArtifacts(manifest.kind)) {
+      if (artifact === metadataName) continue;
+      const level = zipCompressionLevel(compressionLevel);
+      const file = level === 0
+        ? new ZipPassThrough(artifact)
+        : new AsyncZipDeflate(artifact, { level });
+      archive.add(file);
+      for (const segment of segments) {
+        const stored = segment.artifacts[artifact];
+        if (!stored) continue;
+        const bytes = await store.read(stored.path);
+        await onBytesRead(bytes.byteLength);
+        file.push(bytes, false);
+      }
+      file.push(new Uint8Array(), true);
+    }
+    await onCompressing();
+    addZipFile(archive, metadataName, metadata, compressionLevel);
+    archive.end();
+    return await done;
+  } catch (error) {
+    archive.terminate();
+    throw error;
+  }
+}
+
 /**
  * Produces consecutive time-window ZIP volumes. Each volume keeps the canonical
  * Python-compatible filenames, so a consumer can process every numbered ZIP as
@@ -157,24 +226,20 @@ export async function* exportSessionVolumes(
   for (let index = 0; index < groups.length; index += 1) {
     const segments = groups[index]!;
     await report("reading", index);
-    const entries: Record<string, Uint8Array> = {};
-    for (const artifact of expectedArtifacts(manifest.kind)) {
-      if (artifact === metadataName) continue;
-      const parts: Uint8Array[] = [];
-      for (const segment of segments) {
-        const stored = segment.artifacts[artifact];
-        if (stored) {
-          const bytes = await store.read(stored.path);
-          parts.push(bytes);
-          bytesRead += bytes.byteLength;
-          await report("reading", index);
-        }
-      }
-      entries[artifact] = concatenate(parts);
-    }
-    entries[metadataName] = exportMetadata(manifest, index, groups.length, segments);
-    await report("compressing", index);
-    const bytes = zipSync(entries, { level: options.compressionLevel ?? 6 });
+    const metadata = exportMetadata(manifest, index, groups.length, segments);
+    const bytes = await buildZipVolume(
+      store,
+      manifest,
+      metadataName,
+      segments,
+      metadata,
+      options.compressionLevel,
+      async (size) => {
+        bytesRead += size;
+        await report("reading", index);
+      },
+      () => report("compressing", index),
+    );
     const suffix = groups.length === 1
       ? ""
       : `_part${String(index + 1).padStart(width, "0")}_of_${String(groups.length).padStart(width, "0")}`;

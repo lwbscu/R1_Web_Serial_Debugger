@@ -23,6 +23,15 @@ function manifest(kind: "communication" | "locator" | "global" = "communication"
   };
 }
 
+class CountingStore extends MemoryFileStore {
+  checkpointWrites = 0;
+
+  override async write(path: string, data: string | Uint8Array): Promise<void> {
+    if (/checkpoint(?:\.recovery)?\.json$/.test(path)) this.checkpointWrites += 1;
+    await super.write(path, data);
+  }
+}
+
 describe("SessionRecorder", () => {
   it("rolls atomically by byte and time policy and can resume an active session", async () => {
     const store = new MemoryFileStore();
@@ -53,6 +62,26 @@ describe("SessionRecorder", () => {
     const path = recorder.snapshot.segments[0]?.artifacts["raw_serial.log"]?.path;
     expect(path).toBeDefined();
     expect(decoder.decode(await store.read(path!))).toBe("first\nsecond\n");
+  });
+
+  it("appends a batch with one checkpoint pair while preserving artifact order", async () => {
+    const store = new CountingStore();
+    const recorder = await SessionRecorder.create(store, manifest(), {
+      rollingPolicy: { maxSegmentBytes: 128, maxSegmentDurationMs: 30_000 },
+    });
+    store.checkpointWrites = 0;
+
+    await recorder.appendBatch([
+      { artifact: "remote_raw.log", data: "R1\n", observedAtMs: 1 },
+      { artifact: "remote_raw.log", data: "R2\n", observedAtMs: 2 },
+      { artifact: "chassis_raw.log", data: "C1\n", observedAtMs: 3 },
+    ]);
+
+    expect(store.checkpointWrites).toBe(2);
+    const remotePath = recorder.snapshot.segments[0]?.artifacts["remote_raw.log"]?.path;
+    const chassisPath = recorder.snapshot.segments[0]?.artifacts["chassis_raw.log"]?.path;
+    expect(decoder.decode(await store.read(remotePath!))).toBe("R1\nR2\n");
+    expect(decoder.decode(await store.read(chassisPath!))).toBe("C1\n");
   });
 
   it("rejects locator coordinate metadata on communication sessions", async () => {
@@ -167,6 +196,30 @@ describe("session export", () => {
     expect(progress).toContain("reading:2/2:100:8/8:");
     expect(progress).toContain("ready:2/2:100:8/8:communication-test_part002_of_002.zip");
     expect(progress.at(-1)).toBe("done:2/2:100:8/8:");
+  });
+
+  it("reports progress through exportSession and handles empty sessions", async () => {
+    const store = new MemoryFileStore();
+    const recorder = await SessionRecorder.create(store, manifest());
+    await recorder.stop(2);
+
+    const progress: string[] = [];
+    const volumes = await exportSession(store, manifest().sessionId, {
+      compressionLevel: 0,
+      onProgress: (item) => {
+        progress.push(`${item.phase}:${Math.round(item.percent)}:${item.bytesRead}/${item.totalBytes}`);
+      },
+    });
+
+    expect(volumes).toHaveLength(1);
+    expect(progress).toEqual([
+      "reading:0:0/0",
+      "compressing:100:0/0",
+      "ready:100:0/0",
+      "done:100:0/0",
+    ]);
+    const entries = unzipSync(volumes[0]!.bytes);
+    expect(JSON.parse(decoder.decode(entries["session.json"]!)).sessionId).toBe("communication-test");
   });
 
   it("preserves locator coordinate context in exported metadata", async () => {

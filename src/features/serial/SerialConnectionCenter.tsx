@@ -70,8 +70,6 @@ function statusKey(role: SourceRole, snapshot: PortSnapshot | null): string {
     snapshot.health,
     snapshot.selected ? "selected" : "unselected",
     snapshot.detectedRole ?? "",
-    snapshot.stats.bytesReceived,
-    snapshot.stats.validFrames,
     snapshot.error ?? "",
   ].join(":");
 }
@@ -128,7 +126,7 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
     void recorder.append("connection_status.csv", "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error\r\n");
   }, [locatorCoordinates, recorder]);
 
-  const recordingLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始三串口录制";
+  const recordingLabel = recorder.stopping ? "正在停止录制" : recorder.active ? "停止并后台下载" : "开始三串口录制";
 
   return <section className="serial-center" aria-label="三串口连接中心">
     <div className="sidebar-section-label">三串口连接中心</div>
@@ -139,17 +137,18 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
       </div>
       <div className="serial-center-actions">
         <button type="button" onClick={requestOpenSerialDiscovery}>智能连接串口</button>
-        <button type="button" className={recorder.active ? "danger" : "secondary"} disabled={recorder.exporting} onClick={() => void (recorder.active ? recorder.stopAndDownload() : startRecording())}><RecordIcon />{recordingLabel}</button>
+        <button type="button" className={recorder.active ? "danger" : "secondary"} disabled={recorder.stopping} onClick={() => void (recorder.active ? recorder.stopAndDownload() : startRecording())}><RecordIcon />{recordingLabel}</button>
       </div>
       <div className="serial-role-list">
         {ORDER.map((role) => {
           const roleState = state.roles[role];
           const snapshot = snapshots[role];
-          const health = snapshot?.health ?? "unlinked";
+          const health = snapshot?.selected ? snapshot.health : "unlinked";
+          const lifecycle = snapshot?.selected ? snapshot.lifecycle : "unlinked";
           return <article key={role} className="serial-role-card" data-health={health}>
             <div><span className={`status-orb ${health}`} aria-hidden="true" /><strong>{ROLE_LABELS[role]}</strong><small>{ROLE_SUBTITLES[role]}</small></div>
             <dl>
-              <div><dt>状态</dt><dd>{HEALTH_TEXT[health]} · {LIFECYCLE_TEXT[snapshot?.lifecycle ?? "unlinked"]}</dd></div>
+              <div><dt>状态</dt><dd>{HEALTH_TEXT[health]} · {LIFECYCLE_TEXT[lifecycle]}</dd></div>
               <div><dt>设备</dt><dd>{deviceText(snapshot)}</dd></div>
               <div><dt>RX</dt><dd>{snapshot?.stats.bytesReceived.toLocaleString() ?? "0"} B · {snapshot?.stats.validFrames.toLocaleString() ?? "0"} 帧</dd></div>
             </dl>
@@ -158,7 +157,10 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
         })}
       </div>
       {recorder.error && <p className="error serial-center-error">录制：{recorder.error}</p>}
-      {recorder.recoverable.length > 0 && <div className="serial-center-recovery"><strong>可恢复</strong>{recorder.recoverable.slice(0, 3).map((item) => <button type="button" className="secondary" key={item.manifest.sessionId} disabled={recorder.exporting} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{item.manifest.sessionId}</button>)}</div>}
+      {recorder.recoverable.length > 0 && <div className="serial-center-recovery"><strong>可恢复</strong>{recorder.recoverable.slice(0, 3).map((item) => {
+        const queued = recorder.exportQueuedIds.includes(item.manifest.sessionId);
+        return <button type="button" className="secondary" key={item.manifest.sessionId} disabled={queued} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{queued ? "导出中" : item.manifest.sessionId}</button>;
+      })}</div>}
     </div>
   </section>;
 }

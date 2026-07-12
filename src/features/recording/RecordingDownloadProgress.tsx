@@ -12,7 +12,7 @@ export function RecordingDownloadProgress({ progress }: { progress: DownloadProg
     aria-atomic="true"
   >
     <div>
-      <span>录制下载</span>
+      <span>后台生成下载</span>
       <strong>{progress.label}</strong>
       <small>{progress.detail}</small>
     </div>

@@ -39,6 +39,12 @@ export interface SessionRecorderOptions {
   now?: () => number;
 }
 
+export interface SessionRecorderBatchItem {
+  artifact: RecordingArtifact;
+  data: StoredData;
+  observedAtMs?: number;
+}
+
 /**
  * Crash-tolerant recorder. Every append is serialized and followed by a
  * checkpoint update, so a page reload can recover all fully written appends.
@@ -142,26 +148,26 @@ export class SessionRecorder {
   }
 
   append(artifact: RecordingArtifact, data: StoredData, observedAtMs = this.now()): Promise<void> {
+    return this.appendBatch([{ artifact, data, observedAtMs }]);
+  }
+
+  appendBatch(items: readonly SessionRecorderBatchItem[]): Promise<void> {
     return this.enqueue(async () => {
       if (this.checkpoint.status !== "active") {
         throw new Error(`Cannot append to a ${this.checkpoint.status} recording`);
       }
-      if (!isArtifactForKind(this.manifest.kind, artifact)) {
-        throw new Error(`${artifact} does not belong to a ${this.manifest.kind} session`);
-      }
-      const bytes = toBytes(data);
-      if (bytes.byteLength === 0) return;
-      let segment = this.currentSegment();
-      const elapsed = observedAtMs - segment.startedAtMs;
-      if (
-        segment.sizeBytes > 0 &&
-        (elapsed >= this.policy.maxSegmentDurationMs ||
-          segment.sizeBytes + bytes.byteLength > this.policy.maxSegmentBytes)
-      ) {
-        segment = this.roll(observedAtMs);
+      for (const item of items) {
+        if (!isArtifactForKind(this.manifest.kind, item.artifact)) {
+          throw new Error(`${item.artifact} does not belong to a ${this.manifest.kind} session`);
+        }
       }
 
-      const writeSlice = async (target: StoredSegment, slice: Uint8Array): Promise<void> => {
+      const writeSlice = async (
+        target: StoredSegment,
+        artifact: RecordingArtifact,
+        observedAtMs: number,
+        slice: Uint8Array,
+      ): Promise<void> => {
         const path = segmentPath(this.manifest.sessionId, target.index, artifact);
         await this.store.append(path, slice);
         const previousSize = target.artifacts[artifact]?.sizeBytes ?? 0;
@@ -174,21 +180,44 @@ export class SessionRecorder {
         target.endedAtMs = Math.max(target.endedAtMs, observedAtMs);
       };
 
-      if (bytes.byteLength <= this.policy.maxSegmentBytes) {
-        await writeSlice(segment, bytes);
-      } else {
-        // Oversized single writes are the only case allowed to cross a segment
-        // boundary. Normal log/CSV appends remain intact records per volume.
-        if (segment.sizeBytes > 0) segment = this.roll(observedAtMs);
-        let offset = 0;
-        while (offset < bytes.byteLength) {
-          const length = Math.min(this.policy.maxSegmentBytes, bytes.byteLength - offset);
-          await writeSlice(segment, bytes.subarray(offset, offset + length));
-          offset += length;
-          if (offset < bytes.byteLength) segment = this.roll(observedAtMs);
+      let changed = false;
+      let lastObservedAtMs = this.checkpoint.updatedAtMs;
+
+      for (const item of items) {
+        const { artifact } = item;
+        const bytes = toBytes(item.data);
+        if (bytes.byteLength === 0) continue;
+        const observedAtMs = item.observedAtMs ?? this.now();
+        lastObservedAtMs = Math.max(lastObservedAtMs, observedAtMs);
+
+        let segment = this.currentSegment();
+        const elapsed = observedAtMs - segment.startedAtMs;
+        if (
+          segment.sizeBytes > 0 &&
+          (elapsed >= this.policy.maxSegmentDurationMs ||
+            segment.sizeBytes + bytes.byteLength > this.policy.maxSegmentBytes)
+        ) {
+          segment = this.roll(observedAtMs);
         }
+
+        if (bytes.byteLength <= this.policy.maxSegmentBytes) {
+          await writeSlice(segment, artifact, observedAtMs, bytes);
+        } else {
+          // Oversized single writes are the only case allowed to cross a segment
+          // boundary. Normal log/CSV appends remain intact records per volume.
+          if (segment.sizeBytes > 0) segment = this.roll(observedAtMs);
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            const length = Math.min(this.policy.maxSegmentBytes, bytes.byteLength - offset);
+            await writeSlice(segment, artifact, observedAtMs, bytes.subarray(offset, offset + length));
+            offset += length;
+            if (offset < bytes.byteLength) segment = this.roll(observedAtMs);
+          }
+        }
+        changed = true;
       }
-      this.checkpoint.updatedAtMs = observedAtMs;
+      if (!changed) return;
+      this.checkpoint.updatedAtMs = lastObservedAtMs;
       await this.persistCheckpoint();
     });
   }
