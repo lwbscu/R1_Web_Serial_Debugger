@@ -11,6 +11,7 @@ import { SerialConnectionBar } from "../../shared/components/SerialConnectionBar
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { numberText } from "../../shared/format";
 import { demoLocatorFrame } from "../demo/demoData";
+import { RecordingDownloadProgress } from "../recording/RecordingDownloadProgress";
 import { useRecorder } from "../recording/useRecorder";
 import { usePortSession } from "../serial/usePortSession";
 import { FieldMap, type MapTrails } from "./FieldMap";
@@ -159,6 +160,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   const exportSnapshot = () => downloadText(`r1-locator-state-${Date.now()}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), frame, mouse, replay }, null, 2), "application/json;charset=utf-8");
   const resetViewData = () => { setTrails(EMPTY_TRAILS); setFrame(null); };
   const serialBusy = port.snapshot.lifecycle === "reading";
+  const recordingButtonLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始本地录制";
   const visibleLogs = rawPaused ? frozenLogs.current ?? logs : logs;
   const toggleRawPause = () => {
     if (rawPaused) frozenLogs.current = null;
@@ -169,9 +171,10 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   return <main className="workspace locator-workspace" data-testid="locator-workspace">
     <WorkspaceHeader kicker="R1 LOCATER MAP" title="定位地图" description="直接使用冻结 Python 上位机的原始场地图与 R1 机器人贴图；支持鼠标锚点缩放、拖拽平移、图层控制、轨迹及 DT35 场地残差悬停。"
       meta={<><span>1215 × 1210 cm</span><span>origin center</span><span>+Y forward</span><span>30 FPS UI</span></>}
-      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={toggleDemo}>{demoActive ? "停止演示" : "演示轨迹"}</button><button className="secondary" onClick={saveMap}>导出地图画布</button><button type="button" className={recorder.active ? "danger" : ""} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recorder.active ? "停止并下载" : "开始本地录制"}</button></>} />
+      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={toggleDemo}>{demoActive ? "停止演示" : "演示轨迹"}</button><button className="secondary" onClick={saveMap}>导出地图画布</button><button type="button" className={recorder.active ? "danger" : ""} disabled={recorder.exporting} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recordingButtonLabel}</button></>} />
 
     {!port.supported && <div className="unsupported">当前浏览器不支持 Web Serial。日志回放、地图交互和演示轨迹仍可使用；实时采集请使用桌面版 Chrome/Edge。</div>}
+    <RecordingDownloadProgress progress={recorder.downloadProgress} />
 
     <SerialConnectionBar title="定位板 / Locator" subtitle="USART1 CSV · $R1M" supported={port.supported} snapshot={port.snapshot}
       onSelect={() => { stopDemo(); stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); void port.select(); }} onConnect={() => { stopDemo(); stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); void port.connect(); }} onClose={() => { setFrame(null); telemetryHub.releaseSource("locator", "serial"); void port.close(); }} />
@@ -230,6 +233,6 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
     </div>
 
     {recorder.error && <p className="error">录制：{recorder.error}</p>}
-    {recorder.recoverable.length > 0 && <section className="recovery"><strong>可恢复会话</strong>{recorder.recoverable.map((item) => <button className="secondary" key={item.manifest.sessionId} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{item.manifest.sessionId}（{Math.round(item.totalBytes / 1024)} KiB）</button>)}</section>}
+    {recorder.recoverable.length > 0 && <section className="recovery"><strong>可恢复会话</strong>{recorder.recoverable.map((item) => <button className="secondary" key={item.manifest.sessionId} disabled={recorder.exporting} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{item.manifest.sessionId}（{Math.round(item.totalBytes / 1024)} KiB）</button>)}</section>}
   </main>;
 }

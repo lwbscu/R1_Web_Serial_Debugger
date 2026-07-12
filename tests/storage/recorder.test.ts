@@ -130,4 +130,32 @@ describe("session export", () => {
       "communication-test_part002_of_002.zip",
     ]);
   });
+
+  it("reports byte and volume progress while exporting volumes", async () => {
+    const store = new MemoryFileStore();
+    const recorder = await SessionRecorder.create(store, manifest(), {
+      rollingPolicy: { maxSegmentBytes: 4, maxSegmentDurationMs: 30_000 },
+    });
+    await recorder.append("remote_raw.log", "abcdefgh", 1);
+    await recorder.stop(2);
+
+    const progress: string[] = [];
+    for await (const volume of exportSessionVolumes(store, manifest().sessionId, {
+      maxVolumeBytes: 4,
+      compressionLevel: 0,
+      onProgress: (item) => {
+        progress.push(`${item.phase}:${item.volumeIndex}/${item.volumeTotal}:${Math.round(item.percent)}:${item.bytesRead}/${item.totalBytes}:${item.filename ?? ""}`);
+      },
+    })) {
+      expect(volume.total).toBe(2);
+    }
+
+    expect(progress[0]).toBe("reading:1/2:0:0/8:");
+    expect(progress).toContain("reading:1/2:50:4/8:");
+    expect(progress).toContain("compressing:1/2:50:4/8:");
+    expect(progress).toContain("ready:1/2:50:4/8:communication-test_part001_of_002.zip");
+    expect(progress).toContain("reading:2/2:100:8/8:");
+    expect(progress).toContain("ready:2/2:100:8/8:communication-test_part002_of_002.zip");
+    expect(progress.at(-1)).toBe("done:2/2:100:8/8:");
+  });
 });

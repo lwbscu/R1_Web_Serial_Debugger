@@ -97,6 +97,34 @@ test("keeps three workspaces mounted and explains unsupported Web Serial", async
   await expect(page.getByRole("heading", { name: "双串口通信诊断" })).toBeVisible();
 });
 
+test("shows progress while stopping and downloading a local recording", async ({ page }) => {
+  await disableWebSerial(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "开始本地录制" }).click();
+  await expect(page.getByRole("button", { name: "停止并下载" })).toBeVisible();
+  const communicationDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "停止并下载" }).click();
+  const communicationStatus = page.getByRole("status").filter({ hasText: "录制下载" });
+  await expect(communicationStatus).toBeVisible();
+  await expect(communicationStatus.getByRole("progressbar", { name: "录制下载进度" })).toBeVisible();
+  await expect(communicationStatus).toContainText("100%");
+  expect((await communicationDownload).suggestedFilename()).toMatch(/^communication_/);
+
+  await page.getByRole("button", { name: /定位地图/ }).click();
+  await page.getByRole("button", { name: "开始本地录制" }).click();
+  const locatorDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "停止并下载" }).click();
+  const locatorStatus = page.getByRole("status").filter({ hasText: "录制下载" });
+  await expect(locatorStatus).toBeVisible();
+  await expect(locatorStatus).toContainText("100%");
+  expect((await locatorDownload).suggestedFilename()).toMatch(/^locator_/);
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(locatorStatus).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
+});
+
 test("shows diagnostic tooltips and a working multi-series waveform demo", async ({ page }) => {
   await disableWebSerial(page);
   await page.setViewportSize({ width: 1600, height: 1000 });

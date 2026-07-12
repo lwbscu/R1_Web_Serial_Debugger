@@ -22,6 +22,20 @@ export interface ExportedVolume {
 export interface ExportSessionOptions {
   maxVolumeBytes?: number;
   compressionLevel?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+  onProgress?: (progress: ExportSessionProgress) => void | Promise<void>;
+}
+
+export type ExportSessionProgressPhase = "reading" | "compressing" | "ready" | "done";
+
+export interface ExportSessionProgress {
+  phase: ExportSessionProgressPhase;
+  sessionId: string;
+  volumeIndex: number;
+  volumeTotal: number;
+  bytesRead: number;
+  totalBytes: number;
+  percent: number;
+  filename?: string;
 }
 
 const encoder = new TextEncoder();
@@ -84,6 +98,15 @@ function exportMetadata(
   );
 }
 
+function segmentBytes(segments: readonly StoredSegment[]): number {
+  return segments.reduce((total, segment) => total + segment.sizeBytes, 0);
+}
+
+function progressPercent(bytesRead: number, totalBytes: number, phase: ExportSessionProgressPhase): number {
+  if (totalBytes <= 0) return phase === "reading" ? 0 : 100;
+  return Math.min(100, Math.max(0, (bytesRead / totalBytes) * 100));
+}
+
 /**
  * Produces consecutive time-window ZIP volumes. Each volume keeps the canonical
  * Python-compatible filenames, so a consumer can process every numbered ZIP as
@@ -94,42 +117,8 @@ export async function exportSession(
   sessionId: string,
   options: ExportSessionOptions = {},
 ): Promise<ExportedVolume[]> {
-  const { manifest, checkpoint } = await readSession(store, sessionId);
-  const maxVolumeBytes = options.maxVolumeBytes ?? DEFAULT_MAX_ZIP_VOLUME_BYTES;
-  const groups = groupSegments(checkpoint.segments, maxVolumeBytes);
-  const width = Math.max(3, String(groups.length).length);
-  const stem = safeDownloadStem(sessionId);
-  const metadataName: RecordingArtifact =
-    manifest.kind === "communication" ? "session.json" : "metadata.json";
-
   const results: ExportedVolume[] = [];
-  for (let index = 0; index < groups.length; index += 1) {
-    const segments = groups[index]!;
-    const entries: Record<string, Uint8Array> = {};
-    for (const artifact of expectedArtifacts(manifest.kind)) {
-      if (artifact === metadataName) continue;
-      const parts: Uint8Array[] = [];
-      for (const segment of segments) {
-        const stored = segment.artifacts[artifact];
-        if (stored) parts.push(await store.read(stored.path));
-      }
-      entries[artifact] = concatenate(parts);
-    }
-    entries[metadataName] = exportMetadata(manifest, index, groups.length, segments);
-    const bytes = zipSync(entries, { level: options.compressionLevel ?? 6 });
-    const suffix =
-      groups.length === 1
-        ? ""
-        : `_part${String(index + 1).padStart(width, "0")}_of_${String(groups.length).padStart(width, "0")}`;
-    results.push({
-      filename: `${stem}${suffix}.zip`,
-      index: index + 1,
-      total: groups.length,
-      firstObservedAtMs: segments[0]?.startedAtMs ?? checkpoint.startedAtMs,
-      lastObservedAtMs: segments.at(-1)?.endedAtMs ?? checkpoint.updatedAtMs,
-      bytes,
-    });
-  }
+  for await (const volume of exportSessionVolumes(store, sessionId, options)) results.push(volume);
   return results;
 }
 
@@ -149,26 +138,50 @@ export async function* exportSessionVolumes(
   const stem = safeDownloadStem(sessionId);
   const metadataName: RecordingArtifact =
     manifest.kind === "communication" ? "session.json" : "metadata.json";
+  const totalBytes = segmentBytes(checkpoint.segments);
+  let bytesRead = 0;
+
+  const report = async (phase: ExportSessionProgressPhase, index: number, filename?: string): Promise<void> => {
+    await options.onProgress?.({
+      phase,
+      sessionId,
+      volumeIndex: Math.min(index + 1, groups.length),
+      volumeTotal: groups.length,
+      bytesRead,
+      totalBytes,
+      percent: progressPercent(bytesRead, totalBytes, phase),
+      filename,
+    });
+  };
 
   for (let index = 0; index < groups.length; index += 1) {
     const segments = groups[index]!;
+    await report("reading", index);
     const entries: Record<string, Uint8Array> = {};
     for (const artifact of expectedArtifacts(manifest.kind)) {
       if (artifact === metadataName) continue;
       const parts: Uint8Array[] = [];
       for (const segment of segments) {
         const stored = segment.artifacts[artifact];
-        if (stored) parts.push(await store.read(stored.path));
+        if (stored) {
+          const bytes = await store.read(stored.path);
+          parts.push(bytes);
+          bytesRead += bytes.byteLength;
+          await report("reading", index);
+        }
       }
       entries[artifact] = concatenate(parts);
     }
     entries[metadataName] = exportMetadata(manifest, index, groups.length, segments);
+    await report("compressing", index);
     const bytes = zipSync(entries, { level: options.compressionLevel ?? 6 });
     const suffix = groups.length === 1
       ? ""
       : `_part${String(index + 1).padStart(width, "0")}_of_${String(groups.length).padStart(width, "0")}`;
+    const filename = `${stem}${suffix}.zip`;
+    await report("ready", index, filename);
     yield {
-      filename: `${stem}${suffix}.zip`,
+      filename,
       index: index + 1,
       total: groups.length,
       firstObservedAtMs: segments[0]?.startedAtMs ?? checkpoint.startedAtMs,
@@ -176,6 +189,7 @@ export async function* exportSessionVolumes(
       bytes,
     };
   }
+  await report("done", groups.length - 1);
 }
 
 /** Starts an ordinary browser download; the browser owns the destination path. */

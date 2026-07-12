@@ -145,6 +145,20 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .log-view b { color: #5ab0ff; }
 .log-view em { color: #7f9e86; }
 .empty { margin: 70px 0; color: #526d82; text-align: center; }
+.recording-progress { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 260px); gap: 14px; align-items: center; margin: -7px 0 16px; padding: 12px 14px; border: 1px solid #2a4f63; border-radius: 10px; background: linear-gradient(90deg, rgba(85, 184, 255, .13), rgba(11, 21, 30, .96)); box-shadow: 0 12px 28px rgba(0, 0, 0, .16); }
+.recording-progress > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.recording-progress span { color: var(--accent-2); font: 800 9px ui-monospace, Consolas, monospace; letter-spacing: .14em; text-transform: uppercase; }
+.recording-progress strong { overflow: hidden; color: #eaf6ff; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.recording-progress small { overflow: hidden; color: #82a2b8; font: 10px ui-monospace, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.recording-progress-meter { display: grid; grid-template-columns: minmax(120px, 1fr) auto; gap: 10px; align-items: center; }
+.recording-progress progress { width: 100%; height: 9px; overflow: hidden; border: 0; border-radius: 999px; background: #071018; }
+.recording-progress progress::-webkit-progress-bar { border-radius: 999px; background: #071018; }
+.recording-progress progress::-webkit-progress-value { border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.recording-progress progress::-moz-progress-bar { border-radius: 999px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.recording-progress b { color: #b8cad7; font: 10px ui-monospace, Consolas, monospace; text-align: right; white-space: nowrap; }
+.recording-progress-complete { border-color: rgba(50, 213, 131, .42); background: linear-gradient(90deg, rgba(50, 213, 131, .13), rgba(11, 21, 30, .96)); }
+.recording-progress-error { border-color: rgba(255, 91, 110, .5); background: linear-gradient(90deg, rgba(255, 91, 110, .13), rgba(11, 21, 30, .96)); }
+.recording-progress-error span { color: var(--error); }
 .recovery { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; color: #a9c1d4; }
 .recovery button { font-size: 10px; }
 .event-list { display: grid; gap: 7px; max-height: 280px; overflow: auto; }
@@ -439,6 +453,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
   .diagnosis-banner { grid-template-columns: 1fr; }
   .diagnosis-banner > div { padding: 0 0 9px; border-right: 0; border-bottom: 1px solid #2a3c49; }
   .console-toolbar { align-items: stretch; flex-direction: column; }
+  .recording-progress { grid-template-columns: 1fr; }
   .data-tabs { overflow-x: auto; }
   .locator-side, .locator-inspector { grid-template-columns: 1fr; }
   .map-stage { min-height: clamp(500px, calc(100vh - 170px), 600px); }

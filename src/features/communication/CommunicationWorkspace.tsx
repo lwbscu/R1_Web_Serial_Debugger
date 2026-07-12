@@ -9,6 +9,7 @@ import { InfoTip } from "../../shared/components/InfoTip";
 import { SerialConnectionBar } from "../../shared/components/SerialConnectionBar";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoRemoteFrame } from "../demo/demoData";
+import { RecordingDownloadProgress } from "../recording/RecordingDownloadProgress";
 import { useRecorder } from "../recording/useRecorder";
 import { usePortSession } from "../serial/usePortSession";
 import { MetricPanel } from "./components";
@@ -185,6 +186,7 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   const resetRemote = () => { detector.current.resetSource("remote"); setRemote(null); telemetryHub.releaseSource("remote", "serial"); };
   const resetChassis = () => { detector.current.resetSource("chassis"); setChassis(null); telemetryHub.releaseSource("chassis", "serial"); };
   const serialBusy = remotePort.snapshot.lifecycle === "reading" || chassisPort.snapshot.lifecycle === "reading";
+  const recordingButtonLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始本地录制";
   const shownLogs = streamPaused ? frozenConsole.current?.logs ?? logs : logs;
   const shownFrames = streamPaused ? frozenConsole.current?.frames ?? frames : frames;
   const shownEvents = streamPaused ? frozenConsole.current?.events ?? events : events;
@@ -197,9 +199,10 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   return <main className="workspace communication-workspace" data-testid="communication-workspace">
     <WorkspaceHeader kicker="R1 LINK DIAGNOSTICS" title="双串口通信诊断" description="严格对拍本地 Python 上位机：端口健康与业务诊断分层显示，悬停任一指标可查看阈值、异常判断和排查路径。"
       meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 / v3-151 fields</span><span>stale 1.5 s</span></>}
-      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className={recorder.active ? "danger" : ""} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recorder.active ? "停止并下载" : "开始本地录制"}</button><InfoTip label="本地录制说明">录制会把完整原始帧、结构化帧和事件分片暂存在本站的浏览器私有存储中；停止后才生成下载包。暂停滚动和清空界面都不会停止正在进行的录制。</InfoTip></>} />
+      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className={recorder.active ? "danger" : ""} disabled={recorder.exporting} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recordingButtonLabel}</button><InfoTip label="本地录制说明">录制会把完整原始帧、结构化帧和事件分片暂存在本站的浏览器私有存储中；停止后才生成下载包。暂停滚动和清空界面都不会停止正在进行的录制。</InfoTip></>} />
 
     {!remotePort.supported && <div className="unsupported">实时串口需要桌面版 Chrome/Edge 和 HTTPS。当前仍可使用演示数据查看完整诊断界面。</div>}
+    <RecordingDownloadProgress progress={recorder.downloadProgress} />
 
     <div className="connection-stack">
       <SerialConnectionBar title="遥控器 / RDBG" subtitle="Remote USART1" supported={remotePort.supported} snapshot={remotePort.snapshot}
@@ -239,6 +242,6 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     </section>
 
     {recorder.error && <p className="error">录制：{recorder.error}</p>}
-    {recorder.recoverable.length > 0 && <section className="recovery"><strong>可恢复会话</strong>{recorder.recoverable.map((item) => <button className="secondary" key={item.manifest.sessionId} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{item.manifest.sessionId}（{Math.round(item.totalBytes / 1024)} KiB）</button>)}</section>}
+    {recorder.recoverable.length > 0 && <section className="recovery"><strong>可恢复会话</strong>{recorder.recoverable.map((item) => <button className="secondary" key={item.manifest.sessionId} disabled={recorder.exporting} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{item.manifest.sessionId}（{Math.round(item.totalBytes / 1024)} KiB）</button>)}</section>}
   </main>;
 }
