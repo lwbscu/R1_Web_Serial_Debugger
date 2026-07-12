@@ -189,7 +189,34 @@ describe("字段中文提示", () => {
       label: "ID3 左前舵向速度PID输出",
       unit: "PID 输出",
     });
+    expect(describeSeries("chassis:steerPosPidOut1")).toMatchObject({
+      label: "ID1 右前舵向位置PID输出",
+      unit: "PID 输出",
+    });
+    expect(describeSeries("chassis:steerRotorSpeedRpm2")).toMatchObject({
+      label: "ID2 右后舵向转速",
+      unit: "rpm",
+    });
+    expect(describeSeries("chassis:dgmRecoverCount4")).toMatchObject({
+      label: "ID4 左后 DGM 恢复计数",
+      unit: "次",
+    });
     expect(describeSeries("chassis:drvPidOut3").description).toContain("ID3 左前");
+  });
+
+  it("走点调试字段带有明确单位和说明", () => {
+    expect(describeSeries("chassis:pointDistanceM")).toMatchObject({
+      label: "走点距离",
+      unit: "m",
+    });
+    expect(describeSeries("chassis:pointYawErrorDeg")).toMatchObject({
+      label: "走点 yaw 误差",
+      unit: "°",
+    });
+    expect(describeSeries("chassis:pointSpeedOutput")).toMatchObject({
+      label: "走点速度输出",
+      unit: "无量纲",
+    });
   });
 
   it("未知字段也返回可展示的中文后备说明", () => {

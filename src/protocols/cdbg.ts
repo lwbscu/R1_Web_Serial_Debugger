@@ -67,6 +67,14 @@ export const V4_EXTENSION_FIELDS = [
   "steerPidOut1", "steerPidOut2", "steerPidOut3", "steerPidOut4",
 ] as const;
 
+export const V5_EXTENSION_FIELDS = [
+  "pointDistanceM", "pointYawErrorDeg",
+  "dgmRecoverCount1", "dgmRecoverCount2", "dgmRecoverCount3", "dgmRecoverCount4",
+  "steerPosPidOut1", "steerPosPidOut2", "steerPosPidOut3", "steerPosPidOut4",
+  "steerRotorSpeedRpm1", "steerRotorSpeedRpm2", "steerRotorSpeedRpm3", "steerRotorSpeedRpm4",
+  "pointPidOut", "pointSpeedOutput",
+] as const;
+
 const UINT32_SENTINEL_FIELDS = new Set<string>([
   "lastSigAgeMs", "lastRawAgeMs", "joyAgeMs", "modeAgeMs", "lastModeExecMs",
   "audioAgeMs", "locFrameAgeMs", "mAge1", "mAge2", "mAge3", "mAge4",
@@ -91,6 +99,9 @@ const FLOAT_FIELDS = new Set([
   "steerFb1", "steerFb2", "steerFb3", "steerFb4", "steerErr1", "steerErr2", "steerErr3", "steerErr4",
   "drvPidOut1", "drvPidOut2", "drvPidOut3", "drvPidOut4",
   "steerPidOut1", "steerPidOut2", "steerPidOut3", "steerPidOut4",
+  "pointDistanceM", "pointYawErrorDeg",
+  "steerPosPidOut1", "steerPosPidOut2", "steerPosPidOut3", "steerPosPidOut4",
+  "pointPidOut", "pointSpeedOutput",
 ]);
 
 function assignFields(frame: ChassisFrame, names: readonly string[], values: readonly string[], normalizeSentinels = false): void {
@@ -113,18 +124,19 @@ export function parseCdbg(line: string, observedAtMs: number): ParseOutcome<Chas
   let warnings: string[] = [];
 
   try {
-    if (parts[1] === "3" || parts[1] === "4") {
+    if (parts[1] === "3" || parts[1] === "4" || parts[1] === "5") {
       const version = integer(parts[1]!, "protocol_version");
       const declared = integer(parts[2]!, "field_count");
-      const expected = version === 4 ? 159 : 151;
+      const expected = version === 5 ? 175 : version === 4 ? 159 : 151;
       if (declared !== expected) return { kind: "error", code: "unsupported_field_count", detail: `CDBG v${version} field_count ${declared}` };
       if (parts.length < declared) return { kind: "error", code: "incomplete_frame", detail: `CDBG v${version} incomplete field count ${parts.length} < ${declared}` };
       if (parts.length > declared) return { kind: "error", code: "trailing_fields", detail: `CDBG v${version} trailing field count ${parts.length} > ${declared}` };
       const frame: ChassisFrame = { observedAtMs, rawLine, protocolVersion: version, fieldCount: declared };
       assignFields(frame, V2_90_FIELDS, parts.slice(3, 90), true);
       assignFields(frame, V3_EXTENSION_FIELDS, parts.slice(90, 151), true);
-      if (version === 4) assignFields(frame, V4_EXTENSION_FIELDS, parts.slice(151), true);
-      return { kind: "frame", frame, protocolVersion: version === 4 ? "cdbg-v4" : "cdbg-v3", warnings };
+      if (version >= 4) assignFields(frame, V4_EXTENSION_FIELDS, parts.slice(151, 159), true);
+      if (version >= 5) assignFields(frame, V5_EXTENSION_FIELDS, parts.slice(159), true);
+      return { kind: "frame", frame, protocolVersion: `cdbg-v${version}`, warnings };
     }
 
     if (/^\d+$/.test(parts[1] ?? "") && Number(parts[1]) >= 2 && parts.length > 72) {
@@ -161,7 +173,7 @@ export function parseCdbg(line: string, observedAtMs: number): ParseOutcome<Chas
     return {
       kind: "error",
       code: "field_count",
-      detail: `CDBG field count ${parts.length} != 30/35/72/90/151/159`,
+      detail: `CDBG field count ${parts.length} != 30/35/72/90/151/159/175`,
     };
   } catch (error) {
     return outcomeError(error);
@@ -205,8 +217,9 @@ function eventOutcome(clean: string, observedAtMs: number): ParseOutcome<Chassis
     if (parts.length !== 5) return { kind: "error", code: "field_count", detail: `CDBG_BOOT field count ${parts.length} != 5` };
     const version = integer(parts[1]!, "protocol_version");
     const declared = integer(parts[2]!, "field_count");
-    if (version !== 3 && version !== 4) return { kind: "error", code: "unsupported_version", detail: `CDBG_BOOT version ${version}` };
-    if ((version === 3 && declared !== 151) || (version === 4 && declared !== 159)) {
+    if (version !== 3 && version !== 4 && version !== 5) return { kind: "error", code: "unsupported_version", detail: `CDBG_BOOT version ${version}` };
+    const expected = version === 5 ? 175 : version === 4 ? 159 : 151;
+    if (declared !== expected) {
       return { kind: "error", code: "unsupported_field_count", detail: `CDBG_BOOT field_count ${declared}` };
     }
     const sourceTimeMs = integer(parts[3]!, "ms");
@@ -254,7 +267,7 @@ function eventOutcome(clean: string, observedAtMs: number): ParseOutcome<Chassis
 
 export class ChassisProtocolAdapter implements ProtocolAdapter<ChassisFrame> {
   readonly id = "chassis-cdbg";
-  readonly parserVersion = "4.0.0";
+  readonly parserVersion = "5.0.0";
 
   parse(line: string, observedAtMs: number): ParseOutcome<ChassisFrame> {
     const marker = line.search(/CDBG_BOOT,|CDBG,|CEVT,/);

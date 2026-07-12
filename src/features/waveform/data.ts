@@ -192,6 +192,22 @@ const FIELD_DESCRIPTIONS: Readonly<Record<string, string>> = {
   steerPidOut2: "ID2 右后舵向速度环 PID output，最终发给 GM6020 的控制输出。",
   steerPidOut3: "ID3 左前舵向速度环 PID output，最终发给 GM6020 的控制输出。",
   steerPidOut4: "ID4 左后舵向速度环 PID output，最终发给 GM6020 的控制输出。",
+  pointDistanceM: "走点距离误差，单位 m。",
+  pointYawErrorDeg: "走点目标 yaw 与当前 YAW 的包角误差，单位 deg。",
+  pointPidOut: "走点距离 PID output。",
+  pointSpeedOutput: "走点最终速度输出。",
+  dgmRecoverCount1: "ID1 右前 DGM 自动恢复错误计数。",
+  dgmRecoverCount2: "ID2 右后 DGM 自动恢复错误计数。",
+  dgmRecoverCount3: "ID3 左前 DGM 自动恢复错误计数。",
+  dgmRecoverCount4: "ID4 左后 DGM 自动恢复错误计数。",
+  steerPosPidOut1: "ID1 右前舵向位置外环 PID output，会作为速度环目标。",
+  steerPosPidOut2: "ID2 右后舵向位置外环 PID output，会作为速度环目标。",
+  steerPosPidOut3: "ID3 左前舵向位置外环 PID output，会作为速度环目标。",
+  steerPosPidOut4: "ID4 左后舵向位置外环 PID output，会作为速度环目标。",
+  steerRotorSpeedRpm1: "ID1 右前 GM6020 舵向电机 rotor_speed。",
+  steerRotorSpeedRpm2: "ID2 右后 GM6020 舵向电机 rotor_speed。",
+  steerRotorSpeedRpm3: "ID3 左前 GM6020 舵向电机 rotor_speed。",
+  steerRotorSpeedRpm4: "ID4 左后 GM6020 舵向电机 rotor_speed。",
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
@@ -289,6 +305,22 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   steerPidOut2: "ID2 右后舵向PID输出",
   steerPidOut3: "ID3 左前舵向PID输出",
   steerPidOut4: "ID4 左后舵向PID输出",
+  pointDistanceM: "走点距离",
+  pointYawErrorDeg: "走点 yaw 误差",
+  pointPidOut: "走点 PID 输出",
+  pointSpeedOutput: "走点速度输出",
+  dgmRecoverCount1: "ID1 右前 DGM 恢复计数",
+  dgmRecoverCount2: "ID2 右后 DGM 恢复计数",
+  dgmRecoverCount3: "ID3 左前 DGM 恢复计数",
+  dgmRecoverCount4: "ID4 左后 DGM 恢复计数",
+  steerPosPidOut1: "ID1 右前舵向位置PID输出",
+  steerPosPidOut2: "ID2 右后舵向位置PID输出",
+  steerPosPidOut3: "ID3 左前舵向位置PID输出",
+  steerPosPidOut4: "ID4 左后舵向位置PID输出",
+  steerRotorSpeedRpm1: "ID1 右前舵向转速",
+  steerRotorSpeedRpm2: "ID2 右后舵向转速",
+  steerRotorSpeedRpm3: "ID3 左前舵向转速",
+  steerRotorSpeedRpm4: "ID4 左后舵向转速",
 };
 
 function leafName(path: string): string {
@@ -296,7 +328,7 @@ function leafName(path: string): string {
 }
 
 function motorFieldParts(path: string): { prefix: string; id: string; position: string } | null {
-  const match = /^(drvCmd|drvFb|drvPidOut|steerCmd|steerFb|steerErr|steerPidOut)([1-4])$/i.exec(leafName(path));
+  const match = /^(drvCmd|drvFb|drvPidOut|steerCmd|steerFb|steerErr|steerPidOut|steerPosPidOut|steerRotorSpeedRpm|dgmRecoverCount)([1-4])$/i.exec(leafName(path));
   if (!match) return null;
   const positions: Record<string, string> = {
     "1": "ID1 右前", "2": "ID2 右后", "3": "ID3 左前", "4": "ID4 左后",
@@ -316,6 +348,9 @@ function motorFieldLabel(path: string): string | null {
     steerFb: "舵向反馈",
     steerErr: "舵向误差",
     steerPidOut: "舵向速度PID输出",
+    steerPosPidOut: "舵向位置PID输出",
+    steerRotorSpeedRpm: "舵向转速",
+    dgmRecoverCount: " DGM 恢复计数",
   };
   return `${motor.position}${labels[motor.prefix] ?? "电机字段"}`;
 }
@@ -330,8 +365,11 @@ function inferredDescription(path: string): string {
       drvPidOut: "发给 DGM 速度环的输出指令；DGM 内部 PID output 本代码不可直接读取",
       steerCmd: "舵向目标角", steerFb: "舵向角反馈", steerErr: "舵向位置误差",
       steerPidOut: "舵向速度环 PID output，最终送入 GM6020 电压控制",
+      steerPosPidOut: "舵向位置外环 PID output，会作为速度环目标",
+      steerRotorSpeedRpm: "GM6020 舵向电机 rotor_speed",
+      dgmRecoverCount: "DGM 自动恢复错误计数",
     };
-    return `${motor.position} · ${meanings[motor.prefix] ?? "电机字段"}。v4/159 按用户标注 ID 顺序输出；v3/旧固件可能仍是旧内部顺序。`;
+    return `${motor.position} · ${meanings[motor.prefix] ?? "电机字段"}。v5/175 与 v4/159 均按用户标注 ID 顺序输出；v3/旧固件可能仍是旧内部顺序。`;
   }
   if (/Count$/i.test(leaf)) return `${path} 的累计计数`;
   if (/AgeMs$|Ms$/i.test(leaf)) return `${path} 的时间或时延观测值`;
@@ -342,8 +380,10 @@ function inferredDescription(path: string): string {
 export function inferFieldUnit(path: string): string {
   const leaf = leafName(path);
   if (/^(dt35_[12])$/i.test(leaf) || /mm$/i.test(leaf)) return "mm";
+  if (/^pointDistanceM$/i.test(leaf)) return "m";
   if (/^(pos|locater|lidar|encoder)[XY]$/i.test(leaf) || /cm$/i.test(leaf)) return "cm";
   if (/deg$|yaw/i.test(leaf)) return "°";
+  if (/^steerRotorSpeedRpm[1-4]$/i.test(leaf)) return "rpm";
   if (/ageMs$|Ms$/i.test(leaf)) return "ms";
   if (/packetLossRate$/i.test(leaf)) return "比例 (0–1)";
   if (/Rate$/i.test(leaf)) return "比例";
@@ -351,8 +391,8 @@ export function inferFieldUnit(path: string): string {
   if (/Len$/i.test(leaf)) return "byte";
   if (/^(?:drvCmd|drvFb|drvPidOut)[1-4]$/i.test(leaf)) return "r/s";
   if (/^(?:steerCmd|steerFb|steerErr)[1-4]$/i.test(leaf)) return "°";
-  if (/^steerPidOut[1-4]$/i.test(leaf)) return "PID 输出";
-  if (/Count$|failCount$|lost$|retry$/i.test(leaf)) return "次";
+  if (/^(?:steerPidOut|steerPosPidOut)[1-4]$/i.test(leaf)) return "PID 输出";
+  if (/dgmRecoverCount[1-4]$/i.test(leaf) || /Count$|failCount$|lost$|retry$/i.test(leaf)) return "次";
   if (/Score$/i.test(leaf)) return "分";
   if (/Valid$|Online$|Active$|Ready$|Present$|Seen$|crcOk$/i.test(leaf)) return "0/1";
   if (/^seq$/i.test(leaf)) return "序号";

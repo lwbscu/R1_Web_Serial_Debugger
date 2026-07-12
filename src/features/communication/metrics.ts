@@ -135,6 +135,23 @@ export const mechanismMetricSpecs: readonly MetricSpec[] = [
 
 const locationTip = (meaning: string, normal: string, abnormal: string, check: string, source: string) => tip(meaning, normal, abnormal, check, source);
 const quad = (chassis: ChassisFrame | null, stem: string) => fields(chassis, `${stem}1`, `${stem}2`, `${stem}3`, `${stem}4`);
+const sumTuple = (value: unknown): number | null => !Array.isArray(value) || value.some(missing)
+  ? null : value.reduce((sum, item) => sum + Number(item), 0);
+
+/** CDBG v5: point-control internals, DGM recovery, and steering cascade details. */
+export const pointDebugMetricSpecs: readonly MetricSpec[] = [
+  simple("v5_point_error", "走点距离 / yaw 误差", "point_distance_m / point_yaw_error_deg", "m / deg", locationTip("走点模式内部距离误差与目标 yaw 包角误差。", "走点过程中逐步回落，到点后接近 0。", "距离或 yaw 误差长期不收敛。", "对齐目标点、定位输入、yaw PID 与 motion source。", "ChassisFrame.pointDistanceM/pointYawErrorDeg"), ({ chassis }) => fields(chassis, "pointDistanceM", "pointYawErrorDeg"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `${Number(v[0]).toFixed(3)} m · yaw=${Number(v[1]).toFixed(1)}°`),
+  simple("v5_point_output", "走点 PID / 速度输出", "point_pid_out / point_speed_output", "", locationTip("走点距离 PID 输出与最终速度输出。", "有距离误差时有输出，到点后回落。", "有误差但输出为 0，或到点后仍持续输出。", "检查 pointPid、最小速度限制、死区和目标点状态。", "ChassisFrame.pointPidOut/pointSpeedOutput"), ({ chassis }) => fields(chassis, "pointPidOut", "pointSpeedOutput"), (v) => !Array.isArray(v) || tupleMissing(v) ? "—" : `pid=${Number(v[0]).toFixed(3)} · speed=${Number(v[1]).toFixed(3)}`),
+  simple("v5_dgm_recover", "DGM 恢复计数 ID1..4", "dgm_recover_count1..4", "次", locationTip("四个 DGM 自动恢复错误计数，网页由四轮计数派生总数。", "全部为 0 或不再增长。", "任一轮累计增加表示该轮 DGM 报错后触发恢复。", "按 ID1右前、ID2右后、ID3左前、ID4左后检查驱动器错误、供电和 CAN。", "ChassisFrame.dgmRecoverCount1..4"), ({ chassis }) => quad(chassis, "dgmRecoverCount"), (v) => {
+    const total = sumTuple(v);
+    return total === null ? "—" : `total=${total} · ${tuple(v, 0)}`;
+  }, (v) => {
+    const total = sumTuple(v);
+    return total === null ? "unknown" : total > 0 ? "warn" : "normal";
+  }),
+  simple("v5_steer_pos_pid", "Steer position PID ID1..4", "steer_pos_pid_out1..4", "PID", locationTip("四个舵向位置外环 PID output，会作为速度环目标。", "转向时有输出，角度接近目标后回落。", "外环有大输出但舵向误差不收敛。", "对比 Steer error、Steer speed PID output 和 GM6020 转速。", "ChassisFrame.steerPosPidOut1..4"), ({ chassis }) => quad(chassis, "steerPosPidOut"), (v) => tuple(v)),
+  simple("v5_steer_rotor_speed", "Steer rotor speed ID1..4", "steer_rotor_speed_rpm1..4", "rpm", locationTip("四个 GM6020 舵向电机 rotor_speed。", "转向时反馈速度跟随外环/速度环输出。", "有 PID 输出但速度长期为 0 或方向异常。", "检查 GM6020 反馈、CAN、电机使能和机械卡滞。", "ChassisFrame.steerRotorSpeedRpm1..4"), ({ chassis }) => quad(chassis, "steerRotorSpeedRpm"), (v) => tuple(v, 0)),
+];
 
 export const locationMetricSpecs: readonly MetricSpec[] = [
   simple("pos", "Chassis pose", "pos_x / pos_y / yaw", "cm / deg", locationTip("底盘最终定位姿态。", "有限且连续。", "缺失、非有限或突跳。", "比较 Locater、LiDAR 和编码器输入。", "ChassisFrame.posX/posY/yaw"), ({ chassis }) => fields(chassis, "posX", "posY", "yaw"), pose, (_v, c) => locationStatus(c.chassis)),
@@ -173,6 +190,7 @@ export const panelStatus = {
   wireless: (context: MetricContext) => aggregateStatus(wirelessReceiveMetricSpecs, context),
   mode: (context: MetricContext) => aggregateStatus(modeSyncMetricSpecs, context),
   mechanism: (context: MetricContext) => aggregateStatus(mechanismMetricSpecs, context),
+  pointDebug: (context: MetricContext) => aggregateStatus(pointDebugMetricSpecs, context),
   location: ({ chassis }: MetricContext) => locationStatus(chassis),
 };
 

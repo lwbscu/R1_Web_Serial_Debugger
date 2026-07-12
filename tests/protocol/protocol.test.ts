@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ChassisProtocolAdapter, parseCdbg, V3_EXTENSION_FIELDS, V4_EXTENSION_FIELDS } from "../../src/protocols/cdbg";
+import { ChassisProtocolAdapter, parseCdbg, V3_EXTENSION_FIELDS, V4_EXTENSION_FIELDS, V5_EXTENSION_FIELDS } from "../../src/protocols/cdbg";
 import { crc16CcittFalse } from "../../src/protocols/crc16";
 import { parseLocator } from "../../src/protocols/locator";
 import { parseRdbg, parseRdbgTx, RDBG_TX_FIELD_COUNT, RemoteProtocolAdapter } from "../../src/protocols/rdbg";
@@ -93,6 +93,39 @@ describe("protocol compatibility", () => {
     });
   });
 
+  it("parses CDBG v5/175 point, DGM, steering outer loop, and rotor speed fields", () => {
+    expect(V5_EXTENSION_FIELDS).toEqual([
+      "pointDistanceM", "pointYawErrorDeg",
+      "dgmRecoverCount1", "dgmRecoverCount2", "dgmRecoverCount3", "dgmRecoverCount4",
+      "steerPosPidOut1", "steerPosPidOut2", "steerPosPidOut3", "steerPosPidOut4",
+      "steerRotorSpeedRpm1", "steerRotorSpeedRpm2", "steerRotorSpeedRpm3", "steerRotorSpeedRpm4",
+      "pointPidOut", "pointSpeedOutput",
+    ]);
+    const prefix = Array.from({ length: 87 }, (_, index) => String(index + 1));
+    const extension = Array.from({ length: 61 }, (_, index) => String(1001 + index));
+    const v4 = ["2001", "2002", "2003", "2004", "3001", "3002", "3003", "3004"];
+    const v5 = [
+      "1.25", "-7.5",
+      "11", "12", "13", "14",
+      "401", "402", "403", "404",
+      "501", "502", "503", "504",
+      "-0.75", "0.5",
+    ];
+    const outcome = parseCdbg(["CDBG", "5", "175", ...prefix, ...extension, ...v4, ...v5].join(","), 2000);
+    expect(outcome.kind).toBe("frame");
+    if (outcome.kind !== "frame") return;
+    expect(outcome.protocolVersion).toBe("cdbg-v5");
+    expect(outcome.frame).toMatchObject({
+      protocolVersion: 5, fieldCount: 175, ms: 1, diagDropCount: 87,
+      drvPidOut1: 2001, steerPidOut4: 3004,
+      pointDistanceM: 1.25, pointYawErrorDeg: -7.5,
+      dgmRecoverCount1: 11, dgmRecoverCount4: 14,
+      steerPosPidOut1: 401, steerPosPidOut4: 404,
+      steerRotorSpeedRpm1: 501, steerRotorSpeedRpm4: 504,
+      pointPidOut: -0.75, pointSpeedOutput: 0.5,
+    });
+  });
+
   it("normalizes v3 unknown sentinels without touching cumulative counters", () => {
     const prefix = Array.from({ length: 87 }, () => "0");
     const extension = Array.from({ length: 61 }, () => "0");
@@ -119,6 +152,7 @@ describe("protocol compatibility", () => {
     { label: "trailing", values: ["CDBG", "3", "151", ...Array.from({ length: 149 }, () => "0")], code: "trailing_fields" },
     { label: "wrong count", values: ["CDBG", "3", "150", ...Array.from({ length: 148 }, () => "0")], code: "unsupported_field_count" },
     { label: "v4 wrong count", values: ["CDBG", "4", "151", ...Array.from({ length: 148 }, () => "0")], code: "unsupported_field_count" },
+    { label: "v5 wrong count", values: ["CDBG", "5", "159", ...Array.from({ length: 156 }, () => "0")], code: "unsupported_field_count" },
   ])("rejects strict v3 $label frames", ({ values, code }) => {
     const outcome = parseCdbg(values.join(","), 2000);
     expect(outcome).toMatchObject({ kind: "error", code });
@@ -131,6 +165,9 @@ describe("protocol compatibility", () => {
     });
     expect(adapter.parse("CDBG_BOOT,4,159,100,8", 2000)).toMatchObject({
       kind: "event", event: { eventKind: "CDBG_BOOT", sourceTimeMs: 100, fields: [4, 159, 8] },
+    });
+    expect(adapter.parse("CDBG_BOOT,5,175,100,8", 2000)).toMatchObject({
+      kind: "event", event: { eventKind: "CDBG_BOOT", sourceTimeMs: 100, fields: [5, 175, 8] },
     });
     const events = {
       NRF_LINK: [1, 2, 3, 4, 5, 6, 7],

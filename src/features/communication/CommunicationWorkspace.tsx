@@ -16,7 +16,7 @@ import { diagnoseLink, freshMetricContext } from "./diagnosis";
 import { DiagnosticEventDetector, firmwareEventSeverity, type DiagnosticEvent } from "./eventDetector";
 import {
   chassisNrfMetricSpecs, locationMetricSpecs, mechanismMetricSpecs, modeSyncMetricSpecs,
-  panelStatus, remoteMetricSpecs, STATUS_LABELS, wirelessReceiveMetricSpecs,
+  panelStatus, pointDebugMetricSpecs, remoteMetricSpecs, STATUS_LABELS, wirelessReceiveMetricSpecs,
   type MetricContext, type MetricSpec,
 } from "./metrics";
 import { generateHtmlDiagnosticReport, generateMarkdownDiagnosticReport, type DiagnosticReportMetric } from "./reports";
@@ -242,6 +242,7 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
         ...reportMetrics("无线接收", wirelessReceiveMetricSpecs, context),
         ...reportMetrics("模式同步", modeSyncMetricSpecs, context),
         ...reportMetrics("机构链路", mechanismMetricSpecs, context),
+        ...reportMetrics("走点与舵向调试", pointDebugMetricSpecs, context),
         ...reportMetrics("定位输入", locationMetricSpecs, context),
       ],
       events,
@@ -262,7 +263,7 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
 
   return <main className="workspace communication-workspace" data-testid="communication-workspace">
     <WorkspaceHeader kicker="R1 LINK DIAGNOSTICS" title="双串口通信诊断" description="严格对拍本地 Python 上位机：端口健康与业务诊断分层显示，悬停任一指标可查看阈值、异常判断和排查路径。"
-      meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 / v3-151 / v4-159 fields</span><span>stale 1.5 s</span></>}
+      meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 / v3-151 / v4-159 / v5-175 fields</span><span>stale 1.5 s</span></>}
       actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className="secondary" onClick={requestOpenSerialDiscovery}>智能连接串口</button><InfoTip label="统一录制说明">三串口统一录制按钮在左侧“三串口连接中心”。录制会同时包含遥控器、底盘和码盘/定位板；未连接角色写入 not_connected，后续接入会自动续录。</InfoTip></>} />
 
     {!remotePort.supported && <div className="unsupported">实时串口需要桌面版 Chrome/Edge 和 HTTPS。当前仍可使用演示数据查看完整诊断界面。</div>}
@@ -285,6 +286,7 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
       <MetricPanel title="无线接收" subtitle="帧分类、任务 heartbeat、SPI 与寄存器" specs={wirelessReceiveMetricSpecs} context={context} status={panelStatus.wireless(context)} initiallyVisible={8} />
       <MetricPanel title="模式同步" subtitle="遥控模式、实际状态与状态队列" specs={modeSyncMetricSpecs} context={context} status={panelStatus.mode(context)} initiallyVisible={4} />
       <MetricPanel title="机构链路" subtitle="ACT 队列、USART1 发送与机构反馈" specs={mechanismMetricSpecs} context={context} status={panelStatus.mechanism(context)} initiallyVisible={5} />
+      <MetricPanel title="走点与舵向调试" subtitle="走点距离、DGM 恢复、外环 PID 与 GM6020 转速" specs={pointDebugMetricSpecs} context={context} status={panelStatus.pointDebug(context)} initiallyVisible={5} />
       <MetricPanel title="定位输入" subtitle="定位板、传感器、电机与 CAN" specs={locationMetricSpecs} context={context} status={panelStatus.location(context)} initiallyVisible={8} />
     </div>
 

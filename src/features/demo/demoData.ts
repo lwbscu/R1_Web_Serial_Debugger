@@ -79,8 +79,8 @@ export function demoChassisFrame(atMs = Date.now()): ChassisFrame {
   const frame: ChassisFrame = {
     observedAtMs: atMs,
     rawLine: "CDBG,DEMO",
-    protocolVersion: 4,
-    fieldCount: 159,
+    protocolVersion: 5,
+    fieldCount: 175,
     ms: Math.floor(atMs % 0xFFFFFFFF), seq: Math.floor(t * 20) % 65536,
     locSrc: 1, posX: wave(t, 7, 180), posY: wave(t, 9, 140), yaw: (t * 8) % 360,
     locaterX: wave(t, 7, 180), locaterY: wave(t, 9, 140), locaterYaw: (t * 8) % 360,
@@ -115,6 +115,10 @@ export function demoChassisFrame(atMs = Date.now()): ChassisFrame {
     mechFeedbackOkCount: 0, mechFeedbackBadCount: 0, mechFeedbackQueueDropCount: 0,
     mechFeedbackAgeMs: null, uart1ErrorCount: 0, uart1RearmOkCount: 1,
     uart1RearmFailCount: 0, uart1RxByteCount: 0, uart1RxByteAgeMs: null,
+    pointDistanceM: Math.abs(wave(t, 3.1, 0.45, 0.55)),
+    pointYawErrorDeg: wave(t, 2.6, 9),
+    pointPidOut: wave(t, 3.1, 0.38),
+    pointSpeedOutput: wave(t, 3.1, 0.55),
   };
   for (let index = 1; index <= 4; index += 1) {
     frame[`mAge${index}`] = 11 + index;
@@ -125,6 +129,9 @@ export function demoChassisFrame(atMs = Date.now()): ChassisFrame {
     frame[`steerErr${index}`] = wave(t, 1.1, 1.2);
     frame[`drvPidOut${index}`] = Number(frame[`drvCmd${index}`]);
     frame[`steerPidOut${index}`] = wave(t, 8 + index * 0.4, 900);
+    frame[`dgmRecoverCount${index}`] = 0;
+    frame[`steerPosPidOut${index}`] = wave(t, 2 + index * 0.2, 120);
+    frame[`steerRotorSpeedRpm${index}`] = wave(t, 2.4 + index * 0.2, 180);
   }
   return frame;
 }

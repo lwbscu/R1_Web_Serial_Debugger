@@ -27,6 +27,9 @@ const PRESETS: ReadonlyArray<{ label: string; fields: SeriesId[] }> = [
   { label: "四轮驱动", fields: ["chassis:drvCmd1", "chassis:drvFb1", "chassis:drvCmd2", "chassis:drvFb2", "chassis:drvCmd3", "chassis:drvFb3", "chassis:drvCmd4", "chassis:drvFb4"] },
   { label: "舵向闭环", fields: ["chassis:steerCmd1", "chassis:steerFb1", "chassis:steerErr1", "chassis:steerCmd2", "chassis:steerFb2", "chassis:steerErr2", "chassis:steerCmd3", "chassis:steerFb3", "chassis:steerErr3", "chassis:steerCmd4", "chassis:steerFb4", "chassis:steerErr4"] },
   { label: "八电机输出", fields: ["chassis:drvPidOut1", "chassis:drvPidOut2", "chassis:drvPidOut3", "chassis:drvPidOut4", "chassis:steerPidOut1", "chassis:steerPidOut2", "chassis:steerPidOut3", "chassis:steerPidOut4"] },
+  { label: "走点闭环", fields: ["chassis:pointDistanceM", "chassis:pointYawErrorDeg", "chassis:pointPidOut", "chassis:pointSpeedOutput"] },
+  { label: "舵向级联", fields: ["chassis:steerErr1", "chassis:steerPosPidOut1", "chassis:steerPidOut1", "chassis:steerRotorSpeedRpm1", "chassis:steerErr2", "chassis:steerPosPidOut2", "chassis:steerPidOut2", "chassis:steerRotorSpeedRpm2"] },
+  { label: "DGM 恢复", fields: ["chassis:dgmRecoverCount1", "chassis:dgmRecoverCount2", "chassis:dgmRecoverCount3", "chassis:dgmRecoverCount4"] },
 ];
 
 function formatTimeSpan(seconds: number): string {

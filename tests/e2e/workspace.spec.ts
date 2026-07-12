@@ -256,7 +256,7 @@ test("shows diagnostic tooltips and a working multi-series waveform demo", async
   });
   expect(serialTipHitTest.visible, JSON.stringify(serialTipHitTest)).toBeTruthy();
   await page.getByRole("button", { name: "演示数据" }).click();
-  await expect(page.locator(".diagnostic-metric").filter({ hasText: "CDBG version" })).toContainText("v4, 159 fields");
+  await expect(page.locator(".diagnostic-metric").filter({ hasText: "CDBG version" })).toContainText("v5, 175 fields");
   const noAck = page.locator(".diagnostic-metric").filter({ hasText: "无 ACK 时间" });
   await expect(noAck).toBeVisible();
   await noAck.hover();

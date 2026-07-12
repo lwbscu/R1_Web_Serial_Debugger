@@ -6,6 +6,7 @@ import {
   mechanismMetricSpecs,
   modeSyncMetricSpecs,
   panelStatus,
+  pointDebugMetricSpecs,
   remoteMetricSpecs,
   wirelessReceiveMetricSpecs,
   type MetricContext,
@@ -40,7 +41,8 @@ describe("Python-equivalent metric configuration", () => {
     expect(wirelessReceiveMetricSpecs).toHaveLength(8);
     expect(modeSyncMetricSpecs).toHaveLength(4);
     expect(mechanismMetricSpecs).toHaveLength(5);
-    for (const item of [...remoteMetricSpecs, ...chassisNrfMetricSpecs, ...wirelessReceiveMetricSpecs, ...modeSyncMetricSpecs, ...mechanismMetricSpecs, ...locationMetricSpecs]) {
+    expect(pointDebugMetricSpecs).toHaveLength(5);
+    for (const item of [...remoteMetricSpecs, ...chassisNrfMetricSpecs, ...wirelessReceiveMetricSpecs, ...modeSyncMetricSpecs, ...mechanismMetricSpecs, ...pointDebugMetricSpecs, ...locationMetricSpecs]) {
       expect(item.key).toBeTruthy();
       expect(item.title).toBeTruthy();
       expect(item.variable).toBeTruthy();
@@ -74,6 +76,8 @@ describe("Python-equivalent metric configuration", () => {
     expect(panelStatus.mode(context(remote(), { ...base, activeRemoteModeLive: 2, chassisState: 0 }))).toBe("error");
     expect(panelStatus.mechanism(context(remote(), { ...base, actionEnqueueDropCount: 1 }))).toBe("warn");
     expect(panelStatus.mechanism(context(remote(), { ...base, mechTxInFlightAgeMs: 1500 }))).toBe("error");
+    expect(panelStatus.pointDebug(context(remote(), { ...base, dgmRecoverCount1: 0, dgmRecoverCount2: 0, dgmRecoverCount3: 0, dgmRecoverCount4: 0 }))).toBe("normal");
+    expect(panelStatus.pointDebug(context(remote(), { ...base, dgmRecoverCount1: 0, dgmRecoverCount2: 2, dgmRecoverCount3: 0, dgmRecoverCount4: 0 }))).toBe("warn");
   });
 
   it("applies remote and chassis thresholds", () => {
