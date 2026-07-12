@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { unzipSync } from "fflate";
 import { bodyToWorld, DT35_MOUNTS, FIELD_BOUNDS } from "../../src/features/locator/geometry";
 
-const CONNECTION_STATUS_HEADER = "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error";
+const CONNECTION_STATUS_HEADER = "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error,transport_status,protocol_status,lines_received,ignored_lines,wrong_role_lines,last_byte_at_ms,last_valid_frame_at_ms,usb_vendor_id,usb_product_id,last_protocol_line_at_ms,last_protocol_error_at_ms,last_protocol_error";
 
 async function disableWebSerial(page: Page) {
   await page.addInitScript(() => {
@@ -90,6 +90,37 @@ async function installMockSerial(page: Page) {
         getPorts: async () => ports,
         requestPort: async () => ports[next++ % ports.length],
       },
+    });
+  });
+}
+
+async function installMismatchSerial(page: Page) {
+  await page.addInitScript(() => {
+    class MismatchPort {
+      readable: ReadableStream<Uint8Array> | null = null;
+      private timer = 0;
+      constructor(private readonly line: string, private readonly info: { usbVendorId: number; usbProductId: number }) {}
+      getInfo() { return this.info; }
+      async open() {
+        this.readable = new ReadableStream<Uint8Array>({
+          start: (controller) => {
+            const emit = () => controller.enqueue(new TextEncoder().encode(this.line));
+            emit();
+            this.timer = window.setInterval(emit, 20);
+          },
+          cancel: () => window.clearInterval(this.timer),
+        });
+      }
+      async close() { window.clearInterval(this.timer); this.readable = null; }
+    }
+    const ports = [
+      new MismatchPort("RDBG,999,future-layout\n", { usbVendorId: 1, usbProductId: 1 }),
+      new MismatchPort("CDBG,6,999,future-layout\n", { usbVendorId: 2, usbProductId: 2 }),
+      new MismatchPort("$R1M,99,future-layout\n", { usbVendorId: 3, usbProductId: 3 }),
+    ];
+    Object.defineProperty(navigator, "serial", {
+      configurable: true,
+      value: { getPorts: async () => ports, requestPort: async () => ports[0] },
     });
   });
 }
@@ -204,6 +235,27 @@ test("shows progress while stopping and downloading a local recording", async ({
 
   await page.setViewportSize({ width: 375, height: 812 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
+});
+
+test("records and exports all three raw streams when every protocol layout is incompatible", async ({ page }) => {
+  await installMismatchSerial(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "开始三串口录制", exact: true }).click();
+  await page.getByRole("button", { name: "智能连接串口" }).first().click();
+  await page.getByRole("button", { name: "批量探测已授权串口" }).click();
+  await expect(page.getByRole("status")).toContainText("3 个已自动绑定并连接", { timeout: 10_000 });
+  await page.getByRole("button", { name: "关闭" }).click();
+  await expect(page.getByTestId("communication-workspace").locator('.serial-connection[data-health="format-mismatch"]')).toHaveCount(2, { timeout: 10_000 });
+  const download = page.waitForEvent("download", { timeout: 120_000 });
+  await page.getByRole("button", { name: "停止并后台下载", exact: true }).click();
+  const path = await (await download).path();
+  expect(path).toBeTruthy();
+  const entries = unzipSync(readFileSync(path!));
+  expect(new TextDecoder().decode(entries["remote_raw.log"]!)).toContain("RDBG,999,future-layout");
+  expect(new TextDecoder().decode(entries["chassis_raw.log"]!)).toContain("CDBG,6,999,future-layout");
+  expect(new TextDecoder().decode(entries["locator_raw.log"]!)).toContain("$R1M,99,future-layout");
+  expect(new TextDecoder().decode(entries["raw_serial.log"]!)).toContain("future-layout");
+  expect(new TextDecoder().decode(entries["connection_status.csv"]!)).toContain("mismatch");
 });
 
 test("stops and downloads a 31 second mock serial recording without blocking the next one", async ({ page }) => {
@@ -469,18 +521,18 @@ test("read-only probes three authorized ports and auto-binds unique roles", asyn
   await page.getByRole("button", { name: /遥控器窗口/ }).click();
   const remotePanel = page.getByTestId("remote-control-workspace").getByLabel("遥控器串口侧栏");
   await expect(remotePanel).toContainText("遥控器串口正在接收");
-  await expect(remotePanel).toContainText("数据正常");
+  await expect(remotePanel).toContainText("协议已匹配");
   await expect(remotePanel.getByRole("button", { name: "断开" })).toBeVisible();
   const remoteWorkspace = page.getByTestId("remote-control-workspace");
   await expect(remoteWorkspace.locator(".remote-hero")).toContainText("当前动作指令");
   await expect(remoteWorkspace.locator(".remote-hero > div:first-child > strong")).toContainText("ACT");
-  await expect(remoteWorkspace.locator(".remote-hero")).toContainText(/echo 匹配|机构反馈对齐/);
+  await expect(remoteWorkspace.locator(".remote-hero")).toContainText("反馈状态");
   await expect(remoteWorkspace.locator(".protocol-panel .remote-args")).toContainText("state");
   await expect(remoteWorkspace.locator(".protocol-panel .remote-args")).toContainText("enabled");
   await expect(remoteWorkspace.locator(".effect-panel")).toContainText("底盘接收 ACT");
   await expect(remoteWorkspace.locator(".effect-panel")).toContainText("ACT 队列");
   await expect(remoteWorkspace.locator(".effect-panel")).toContainText("USART1 发给机构");
-  await expect(remoteWorkspace.locator(".effect-panel")).toContainText("MECH_TX done");
+  await expect(remoteWorkspace.locator(".effect-panel")).toContainText("历史有 MECH_TX 成功");
   await expect(remoteWorkspace.locator(".effect-panel")).toContainText("机构有效反馈");
   await expect(remoteWorkspace.locator(".mechanism-live-panel")).toContainText("机构反馈实况");
   await expect(remoteWorkspace.locator(".mechanism-live-panel")).toContainText("机构有效回传");

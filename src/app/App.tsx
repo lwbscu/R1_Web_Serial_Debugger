@@ -69,7 +69,12 @@ export function App() {
       </nav>
 
       <SerialConnectionCenter recorder={recorder} locatorCoordinates={locatorCoordinates} />
-      <AutoSerialDiscovery showLaunch={false} onRoleBound={focusRole} onBatchComplete={(roles) => { if (roles.length > 1) setActive("communication"); }} />
+      <AutoSerialDiscovery
+        showLaunch={false}
+        onRoleBound={focusRole}
+        onBatchComplete={(roles) => { if (roles.length > 1) setActive("communication"); }}
+        onProbeRawLine={(deviceId, line) => { void recorder.append("raw_serial.log", `${Date.now()},probe,${deviceId},${line}\n`); }}
+      />
 
       <div className="sidebar-spacer" />
       <section className="trust-card">

@@ -83,21 +83,31 @@ describe("只读多端口协议探测", () => {
   it("噪声和坏帧保持 unknown，并保留拒绝证据", async () => {
     const reader = new SequenceReader([bytes("boot noise\nRDBG,1,broken\nrandom text\n")]);
     const result = await probePort(candidate("noise", reader).value, { timeoutMs: 100 });
-    expect(result).toMatchObject({ confidence: "unknown", role: null, reason: "insufficient_evidence" });
-    expect(result.evidence).toMatchObject([{ role: "remote", outcome: "error", score: 0 }]);
+    expect(result).toMatchObject({ confidence: "unknown", role: "remote", reason: "insufficient_evidence" });
+    expect(result.evidence).toMatchObject([{ role: "remote", outcome: "error", score: 1, protocolVersion: "prefix-only" }]);
     expect(result.inspectedLines).toBe(3);
+  });
+
+  it.each([
+    ["remote", "RDBG,1,broken\n", 1, "prefix-only"],
+    ["chassis", "CDBG,1,broken\n", 1, "prefix-only"],
+    ["locator", "$R1M,1,broken\n", 1, "prefix-only"],
+  ] as const)("保留带 %s 协议前缀的坏帧错误", async (role, line, score, protocolVersion) => {
+    const result = await probePort(candidate(`bad-${role}`, new SequenceReader([bytes(line)])).value, { timeoutMs: 100 });
+    expect(result).toMatchObject({ confidence: "unknown", role: score > 0 || role === "locator" ? role : null, reason: "insufficient_evidence" });
+    expect(result.evidence).toHaveLength(1);
+    expect(result.evidence[0]).toMatchObject({ role, outcome: "error", score, protocolVersion });
+    expect(result.evidence[0]?.detail).toBeTruthy();
   });
 
   it.each([
     ["remote", "RDBG,1,broken\n"],
     ["chassis", "CDBG,1,broken\n"],
-    ["locator", "$R1M,1,broken\n"],
-  ] as const)("保留带 %s 协议前缀的坏帧错误", async (role, line) => {
-    const result = await probePort(candidate(`bad-${role}`, new SequenceReader([bytes(line)])).value, { timeoutMs: 100 });
-    expect(result).toMatchObject({ confidence: "unknown", role: null, reason: "insufficient_evidence" });
-    expect(result.evidence).toHaveLength(1);
-    expect(result.evidence[0]).toMatchObject({ role, outcome: "error", score: 0 });
-    expect(result.evidence[0]?.detail).toBeTruthy();
+  ] as const)("连续 %s prefix-only 坏帧也可自动绑定，但不计入有效帧", async (role, line) => {
+    const result = await probePort(candidate(`prefix-${role}`, new SequenceReader([bytes(triple(line))])).value, { timeoutMs: 100 });
+    expect(result).toMatchObject({ confidence: "confident", role, reason: "classified" });
+    expect(result.validFrameCounts[role]).toBe(0);
+    expect(result.protocolEvidence[role]).toEqual({ "prefix-only": 3 });
   });
 
   it("同一端口出现多个有效角色时返回 ambiguous", async () => {

@@ -46,6 +46,24 @@ describe("parseReplayText", () => {
     expect(records.map((record) => record.offsetMs)).toEqual([0, 10]);
     expect(records[0]?.payload).toBe("12.5,3.2,90");
   });
+
+  it("can replay timestamp plus quoted protocol CSV rows by payload column", () => {
+    const records = parseReplayText('1783761597211,"CDBG,578079,5655,1"\n1783761597221,"CDBG,578080,5656,1"\n', {
+      format: "csv",
+      timestampColumn: "column_1",
+      payloadColumn: "column_2",
+    });
+    expect(records.map((record) => [record.offsetMs, record.payload])).toEqual([
+      [0, "CDBG,578079,5655,1"],
+      [10, "CDBG,578080,5656,1"],
+    ]);
+  });
+
+  it("recognizes DBG_META as a raw protocol line when format is auto", () => {
+    const records = parseReplayText("DBG_META,1,19,100,6,179,0x7059,build,ID1=RF,1,2,3,4,5,6,7,8,9,END\n", { format: "auto" });
+    expect(records[0]?.payload).toBe("DBG_META,1,19,100,6,179,0x7059,build,ID1=RF,1,2,3,4,5,6,7,8,9,END");
+    expect(records[0]?.columns).toBeUndefined();
+  });
 });
 
 class FakeTimer implements ReplayTimerDriver {
@@ -111,6 +129,35 @@ describe("loadReplayZip", () => {
     expect(bundle.tracks[0]?.records[0]?.payload).toBe("RDBG,1");
     expect(bundle.tracks[0]?.coordinateSpace).toBe("unknown");
     expect(bundle.metadata).toEqual({ schemaVersion: 1 });
+  });
+
+  it("loads new remote/chassis raw artifacts from a replay ZIP", () => {
+    const archive = zipSync({
+      "remote_raw.log": new TextEncoder().encode("RDBG_TX,2,19,100,8,ACT,5,5B02010101,0,MAX_RT,0,-,15,0x10,0x01,0x2f,0,3,4\n"),
+      "chassis_raw.log": new TextEncoder().encode("DBG_META,1,19,100,6,179,0x7059,build,ID1=RF,1,2,3,4,5,6,7,8,9,END\nCEVT,2,NRF_LINK,10,101,online,NA,0x10,4,5\n"),
+      "connection_status.csv": new TextEncoder().encode("pc_time_ms,role,status\n1,remote,connected\n"),
+    });
+    const bundle = loadReplayZip(archive);
+    expect(bundle.tracks.map((track) => track.name)).toEqual(["remote_raw.log", "chassis_raw.log"]);
+    expect(bundle.tracks[0]?.records[0]?.payload).toContain("RDBG_TX,2,19");
+    expect(bundle.tracks[1]?.records.map((record) => record.payload)).toEqual([
+      "DBG_META,1,19,100,6,179,0x7059,build,ID1=RF,1,2,3,4,5,6,7,8,9,END",
+      "CEVT,2,NRF_LINK,10,101,online,NA,0x10,4,5",
+    ]);
+  });
+
+  it("loads timestamp plus raw-line protocol CSV artifacts from a replay ZIP", () => {
+    const archive = zipSync({
+      "remote_rdbg.csv": new TextEncoder().encode('10,"RDBG,100,7,ACT,76,1,6,1,20,4,1,1,10,0,2,88,1,none"\n'),
+      "chassis_cdbg.csv": new TextEncoder().encode('20,"CDBG,1,2,3"\n'),
+      "chassis_cevt.csv": new TextEncoder().encode('30,"CEVT,2,NRF_LINK,10,101,online,NA,0x10,4,5"\n'),
+    });
+    const bundle = loadReplayZip(archive);
+    expect(bundle.tracks.map((track) => [track.name, track.records[0]?.payload, track.records[0]?.offsetMs])).toEqual([
+      ["remote_rdbg.csv", "RDBG,100,7,ACT,76,1,6,1,20,4,1,1,10,0,2,88,1,none", 0],
+      ["chassis_cdbg.csv", "CDBG,1,2,3", 0],
+      ["chassis_cevt.csv", "CEVT,2,NRF_LINK,10,101,online,NA,0x10,4,5", 0],
+    ]);
   });
 
   it("marks raw locator data as start-relative regardless of metadata", () => {

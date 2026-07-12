@@ -16,18 +16,19 @@ const ROLE_LABELS: Record<SourceRole, string> = {
 };
 
 const ROLE_SUBTITLES: Record<SourceRole, string> = {
-  remote: "RDBG · RDBG_TX",
-  chassis: "CDBG · CEVT",
+  remote: "RDBG · RDBG_TX v1/v2",
+  chassis: "CDBG · CEVT · DBG_META",
   locator: "CSV · $R1M",
 };
 
 const ORDER: SourceRole[] = ["remote", "chassis", "locator"];
-const CONNECTION_STATUS_HEADER = "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error\r\n";
+const CONNECTION_STATUS_HEADER = "pc_time_ms,role,status,lifecycle,health,selected,detected_role,bytes_received,valid_frames,parse_errors,error,transport_status,protocol_status,lines_received,ignored_lines,wrong_role_lines,last_byte_at_ms,last_valid_frame_at_ms,usb_vendor_id,usb_product_id,last_protocol_line_at_ms,last_protocol_error_at_ms,last_protocol_error\r\n";
 
 const HEALTH_TEXT: Record<PortSnapshot["health"] | "unlinked", string> = {
   unlinked: "未链接",
   "no-data": "尚无数据",
   "bytes-only": "有字节",
+  "format-mismatch": "格式不匹配",
   valid: "正常",
   stale: "过期",
   "wrong-role": "错口",
@@ -43,6 +44,25 @@ const LIFECYCLE_TEXT: Record<PortSnapshot["lifecycle"] | "unlinked", string> = {
   error: "异常",
 };
 
+const TRANSPORT_TEXT: Record<PortSnapshot["transportStatus"] | "unlinked", string> = {
+  unlinked: "未初始化",
+  "not-selected": "未选择",
+  idle: "已授权",
+  opening: "打开中",
+  receiving: "正在接收",
+  closing: "关闭中",
+  error: "连接异常",
+};
+
+const PROTOCOL_TEXT: Record<PortSnapshot["protocolStatus"] | "unlinked", string> = {
+  unlinked: "未初始化",
+  unknown: "未识别",
+  valid: "已匹配",
+  stale: "已过期",
+  mismatch: "不匹配",
+  "wrong-role": "错口",
+};
+
 function hex(value: number | undefined): string {
   return value === undefined ? "----" : value.toString(16).toUpperCase().padStart(4, "0");
 }
@@ -51,8 +71,8 @@ function roleStatus(snapshot: PortSnapshot | null): "not_connected" | "connected
   if (!snapshot || !snapshot.selected) return "not_connected";
   if (snapshot.lifecycle === "error") return "error";
   if (snapshot.lifecycle !== "reading") return "disconnected";
-  if (snapshot.health === "wrong-role") return "wrong_role";
-  if (snapshot.health === "stale") return "stale";
+  if (snapshot.protocolStatus === "wrong-role") return "wrong_role";
+  if (snapshot.protocolStatus === "stale") return "stale";
   return "connected";
 }
 
@@ -69,9 +89,13 @@ function statusKey(role: SourceRole, snapshot: PortSnapshot | null): string {
     roleStatus(snapshot),
     snapshot.lifecycle,
     snapshot.health,
+    snapshot.transportStatus,
+    snapshot.protocolStatus,
     snapshot.selected ? "selected" : "unselected",
     snapshot.detectedRole ?? "",
     snapshot.error ?? "",
+    snapshot.lastProtocolErrorAtMs ?? "",
+    snapshot.lastProtocolError ?? "",
   ].join(":");
 }
 
@@ -88,6 +112,18 @@ function statusRow(role: SourceRole, snapshot: PortSnapshot | null, at = Date.no
     snapshot?.stats.validFrames ?? 0,
     snapshot?.stats.parseErrors ?? 0,
     snapshot?.error ?? "",
+    snapshot?.transportStatus ?? "unlinked",
+    snapshot?.protocolStatus ?? "unlinked",
+    snapshot?.stats.linesReceived ?? 0,
+    snapshot?.stats.ignoredLines ?? 0,
+    snapshot?.stats.wrongRoleLines ?? 0,
+    snapshot?.lastByteAtMs ?? "",
+    snapshot?.lastValidFrameAtMs ?? "",
+    snapshot?.portInfo?.usbVendorId ?? "",
+    snapshot?.portInfo?.usbProductId ?? "",
+    snapshot?.lastProtocolLineAtMs ?? "",
+    snapshot?.lastProtocolErrorAtMs ?? "",
+    snapshot?.lastProtocolError ?? "",
   ]);
 }
 
@@ -103,6 +139,8 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
   }), [state.roles.chassis.snapshot, state.roles.locator.snapshot, state.roles.remote.snapshot]);
   const lastKeys = useRef<Record<SourceRole, string | null>>({ remote: null, chassis: null, locator: null });
   const wasActive = useRef(false);
+  const snapshotsRef = useRef(snapshots);
+  snapshotsRef.current = snapshots;
 
   useEffect(() => {
     if (!recorder.active) {
@@ -123,13 +161,24 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
     }
   }, [recorder, snapshots]);
 
+  useEffect(() => {
+    if (!recorder.active) return;
+    const timer = window.setInterval(() => {
+      for (const role of ORDER) void recorder.append("connection_status.csv", statusRow(role, snapshotsRef.current[role]));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [recorder, recorder.active]);
+
   const startRecording = useCallback(async () => {
+    recorder.setProfile("quickSerial");
     await recorder.start({ locatorCoordinates });
   }, [locatorCoordinates, recorder]);
+  const stopRecording = useCallback(async () => {
+    for (const role of ORDER) void recorder.append("connection_status.csv", statusRow(role, snapshotsRef.current[role]));
+    await recorder.stopAndDownload();
+  }, [recorder]);
 
   const recordingLabel = recorder.starting ? "正在开始录制" : recorder.stopping ? "正在停止录制" : recorder.active ? "停止并后台下载" : "开始三串口录制";
-  const modeLocked = recorder.active || recorder.starting || recorder.stopping;
-
   return <section className="serial-center" aria-label="三串口连接中心">
     <div className="sidebar-section-label">三串口连接中心</div>
     <div className="serial-center-card">
@@ -139,23 +188,22 @@ export function SerialConnectionCenter({ recorder, locatorCoordinates }: {
       </div>
       <div className="serial-center-actions">
         <button type="button" onClick={requestOpenSerialDiscovery}>智能连接串口</button>
-        <button type="button" className={recorder.active && !recorder.starting ? "danger" : "secondary"} disabled={recorder.starting || recorder.stopping} onClick={() => void (recorder.active ? recorder.stopAndDownload() : startRecording())}><RecordIcon />{recordingLabel}</button>
+        <button type="button" className={recorder.active && !recorder.starting ? "danger" : "secondary"} disabled={recorder.starting || recorder.stopping} onClick={() => void (recorder.active ? stopRecording() : startRecording())}><RecordIcon />{recordingLabel}</button>
       </div>
-      <div className="recording-profile-toggle" aria-label="录制包模式">
-        <button type="button" className={recorder.profile === "quickSerial" ? "selected" : "secondary"} disabled={modeLocked} aria-pressed={recorder.profile === "quickSerial"} onClick={() => recorder.setProfile("quickSerial")}>快速串口包</button>
-        <button type="button" className={recorder.profile === "full" ? "selected" : "secondary"} disabled={modeLocked} aria-pressed={recorder.profile === "full"} onClick={() => recorder.setProfile("full")}>完整诊断包</button>
-      </div>
-      <p className="recording-profile-hint">{recorder.profile === "quickSerial" ? "录制期间预生成快速 ZIP，仅保存三路原始串口和连接状态。" : "保存原始串口、解析 CSV、事件和诊断派生数据。"}</p>
+      <p className="recording-profile-hint">快速录制始终保存三路原始串口和连接状态；协议不匹配或零合法帧也可停止并下载 ZIP。</p>
       <div className="serial-role-list">
         {ORDER.map((role) => {
           const roleState = state.roles[role];
           const snapshot = snapshots[role];
           const health = snapshot?.selected ? snapshot.health : "unlinked";
           const lifecycle = snapshot?.selected ? snapshot.lifecycle : "unlinked";
+          const transport = snapshot?.selected ? snapshot.transportStatus : "unlinked";
+          const protocol = snapshot?.selected ? snapshot.protocolStatus : "unlinked";
           return <article key={role} className="serial-role-card" data-health={health}>
             <div><span className={`status-orb ${health}`} aria-hidden="true" /><strong>{ROLE_LABELS[role]}</strong><small>{ROLE_SUBTITLES[role]}</small></div>
             <dl>
               <div><dt>状态</dt><dd>{HEALTH_TEXT[health]} · {LIFECYCLE_TEXT[lifecycle]}</dd></div>
+              <div><dt>链路</dt><dd>{TRANSPORT_TEXT[transport]} · 协议{PROTOCOL_TEXT[protocol]}</dd></div>
               <div><dt>设备</dt><dd>{deviceText(snapshot)}</dd></div>
               <div><dt>RX</dt><dd>{snapshot?.stats.bytesReceived.toLocaleString() ?? "0"} B · {snapshot?.stats.validFrames.toLocaleString() ?? "0"} 帧</dd></div>
             </dl>

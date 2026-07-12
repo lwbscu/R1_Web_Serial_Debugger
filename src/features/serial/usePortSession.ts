@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProtocolAdapter, SourceRole } from "../../core/types";
-import { browserSerialProvider, PortSession, probePort, supportsWebSerial, type PortSnapshot, type ReceivedLine } from "../../core/serial";
+import { browserSerialProvider, PortSession, probePort, supportsWebSerial, type PortSnapshot, type RawReceivedLine, type ReceivedLine } from "../../core/serial";
 import { serialSessionRegistry } from "./serialSessionRegistry";
 import { serialHubStore, SERIAL_ROLE_LABELS } from "./serialHubStore";
 
 const SNAPSHOT_COALESCE_MS = 100;
 
 const emptySnapshot = (role: SourceRole): PortSnapshot => ({
-  role, lifecycle: "idle", health: "no-data", selected: false,
+  role, lifecycle: "idle", health: "no-data", transportStatus: "not-selected", protocolStatus: "unknown", selected: false,
   portInfo: null,
-  lastByteAtMs: null, lastValidFrameAtMs: null, detectedRole: null, error: null,
+  lastByteAtMs: null, lastValidFrameAtMs: null, lastProtocolLineAtMs: null,
+  lastProtocolErrorAtMs: null, lastProtocolError: null, detectedRole: null, error: null,
   stats: { bytesReceived: 0, linesReceived: 0, validFrames: 0, parseErrors: 0, ignoredLines: 0, wrongRoleLines: 0 },
 });
 
@@ -18,6 +19,7 @@ export function usePortSession<T>(
   adapter: ProtocolAdapter<T>,
   onLine: (line: ReceivedLine<T>) => void,
   beforeExternalBind?: () => void | Promise<void>,
+  onRawLine?: (line: RawReceivedLine) => void,
 ) {
   const callback = useRef(onLine);
   callback.current = onLine;
@@ -47,6 +49,8 @@ export function usePortSession<T>(
     const previous = snapshotRef.current;
     const urgent = previous.lifecycle !== next.lifecycle ||
       previous.health !== next.health ||
+      previous.transportStatus !== next.transportStatus ||
+      previous.protocolStatus !== next.protocolStatus ||
       previous.selected !== next.selected ||
       previous.detectedRole !== next.detectedRole ||
       previous.error !== next.error;
@@ -65,6 +69,7 @@ export function usePortSession<T>(
         timeoutMs: 2200,
         maxLines: 30,
         minValidFrames: 3,
+        onRawLine: (_candidate, line, observedAtMs) => onRawLine?.({ line, observedAtMs, framingWarnings: [] }),
       });
       if (result.confidence === "confident" && result.role && result.role !== role) {
         const binding = await serialSessionRegistry.bindAndConnect(result.role, port);
@@ -77,18 +82,19 @@ export function usePortSession<T>(
       if (!claim.ok) throw new Error(claim.message);
       return port;
     },
-  } : null, [baseProvider, role]);
+  } : null, [baseProvider, onRawLine, role]);
   const session = useMemo(() => provider ? new PortSession<T>({
     role,
     provider,
     adapter,
+    onRawLine,
     onLine: (line) => callback.current(line),
     onChange: publishSnapshot,
     onWrongRole: (event) => {
       void serialSessionRegistry.migrateWrongRole(event.fromRole, event.detectedRole, event.port)
         .then((result) => serialHubStore.publishAutoMessage(result.role, result.message));
     },
-  }) : null, [role, provider, adapter, publishSnapshot]);
+  }) : null, [role, provider, adapter, onRawLine, publishSnapshot]);
   useEffect(() => () => {
     if (snapshotTimerRef.current !== null) window.clearTimeout(snapshotTimerRef.current);
   }, []);

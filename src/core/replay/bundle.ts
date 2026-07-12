@@ -11,12 +11,20 @@ const REPLAY_ARTIFACTS = new Set([
   "remote_rdbg.csv",
   "remote_rdbg_tx.csv",
   "chassis_cdbg.csv",
+  "chassis_cevt.csv",
   "raw_serial.log",
   "raw_frames.csv",
   "display_frames.csv",
   "locator_raw.log",
   "locator_frames.csv",
   "locator_display_frames.csv",
+]);
+
+const PROTOCOL_CSV_ARTIFACTS = new Set([
+  "remote_rdbg.csv",
+  "remote_rdbg_tx.csv",
+  "chassis_cdbg.csv",
+  "chassis_cevt.csv",
 ]);
 
 export interface LoadReplayOptions extends ParseReplayOptions {
@@ -98,10 +106,11 @@ export function loadReplayZip(
   }
   const tracks = replayEntries.map(({ name, data }) => {
     const format = name.endsWith(".csv") ? "csv" : "raw";
+    const protocolCsv = PROTOCOL_CSV_ARTIFACTS.has(name);
     return trackFromText(
       name,
       decoder.decode(data),
-      { ...options, format },
+      protocolCsv ? { ...options, format, timestampColumn: options.timestampColumn ?? "column_1", payloadColumn: options.payloadColumn ?? "column_2" } : { ...options, format },
       coordinateSpaceForTrack(name, metadata, metadataState),
     );
   });

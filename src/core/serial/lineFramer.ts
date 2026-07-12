@@ -8,7 +8,7 @@ export interface LineFramerOptions {
 }
 
 const DEFAULT_MAX_BUFFER_BYTES = 64 * 1024;
-const DEBUG_MARKER = /(?:RDBG_TX|RDBG_CFG|RDBG_CMD|RDBG|CDBG_BOOT|CDBG|CEVT),/g;
+const DEBUG_MARKER = /(?:RDBG_TX|RDBG_CFG|RDBG_CMD|RDBG|DBG_META|CDBG_BOOT|CDBG|CEVT),/g;
 
 /** Incrementally turns arbitrary serial byte chunks into CR/LF-delimited lines. */
 export class LineFramer {

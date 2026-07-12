@@ -290,6 +290,7 @@ describe("session export", () => {
       "locator_display_frames.csv",
       "locator_frames.csv",
       "locator_raw.log",
+      "raw_serial.log",
       "remote_raw.log",
       "remote_rdbg.csv",
       "remote_rdbg_tx.csv",
@@ -327,6 +328,7 @@ describe("session export", () => {
       "chassis_raw.log",
       "connection_status.csv",
       "locator_raw.log",
+      "raw_serial.log",
       "remote_raw.log",
       "session.json",
     ]);

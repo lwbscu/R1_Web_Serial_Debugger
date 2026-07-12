@@ -23,7 +23,7 @@ export interface RemoteFrame {
 export interface RemoteTxEvent {
   observedAtMs: number;
   rawLine: string;
-  protocolVersion: 1;
+  protocolVersion: 1 | 2;
   ms: number;
   seq: number;
   packetType: string;
@@ -37,6 +37,13 @@ export interface RemoteTxEvent {
   lost: number;
   retry: number;
   args: [number, number, number, number];
+  failReason?: string | null;
+  statusReg?: number | null;
+  fifoStatus?: number | null;
+  observeTx?: number | null;
+  linkOnline?: number | null;
+  noAckStreak?: number | null;
+  dropTotal?: number | null;
 }
 
 export interface ChassisFrame {

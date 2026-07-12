@@ -13,8 +13,26 @@ const LIFECYCLE_TEXT: Record<PortSnapshot["lifecycle"], string> = {
 const HEALTH_TEXT: Record<PortSnapshot["health"], string> = {
   "no-data": "尚无数据",
   "bytes-only": "有字节，等待有效帧",
+  "format-mismatch": "有字节，协议格式不匹配",
   valid: "数据正常",
   stale: "数据已过期",
+  "wrong-role": "疑似选错端口",
+};
+
+const TRANSPORT_TEXT: Record<PortSnapshot["transportStatus"], string> = {
+  "not-selected": "未选择",
+  idle: "已授权，未接收",
+  opening: "正在打开",
+  receiving: "串口已连接，正在接收",
+  closing: "正在关闭",
+  error: "连接异常",
+};
+
+const PROTOCOL_TEXT: Record<PortSnapshot["protocolStatus"], string> = {
+  unknown: "协议未识别",
+  valid: "协议已匹配",
+  stale: "协议已过期",
+  mismatch: "协议不匹配",
   "wrong-role": "疑似选错端口",
 };
 
@@ -50,8 +68,9 @@ export function SerialConnectionBar({ title, subtitle, supported, snapshot, onSe
       <small>115200 baud · 8N1 · Receive only <InfoTip label={`${title} 串口参数与只读说明`}>以 115200 波特率、8 数据位、无校验、1 停止位接收。网页不创建 writer、不发送命令，也不主动切换 DTR/RTS；但个别驱动在打开端口时仍可能影响板卡线路状态。</InfoTip></small>
     </div>
     <div className="serial-health">
-      <strong>{HEALTH_TEXT[snapshot.health]} <InfoTip label={`${title} 数据健康说明`}><strong>尚无数据</strong>表示没有收到字节；<strong>有字节</strong>表示尚未解析出有效帧；<strong>正常</strong>表示持续收到目标协议；<strong>过期</strong>表示最后有效帧超过 1.5 秒；<strong>选错端口</strong>表示连续识别到其他角色协议。</InfoTip></strong>
-      <span>{LIFECYCLE_TEXT[snapshot.lifecycle]}</span>
+      <strong>{HEALTH_TEXT[snapshot.health]} <InfoTip label={`${title} 数据健康说明`}><strong>尚无数据</strong>表示没有收到字节；<strong>有字节</strong>表示尚未识别协议；<strong>格式不匹配</strong>表示串口仍在收原始数据但最新协议行解析失败；<strong>正常</strong>表示持续收到目标协议；<strong>过期</strong>表示最后有效协议行超过 1.5 秒；<strong>选错端口</strong>表示连续识别到其他角色协议。格式不匹配不会停止原始录制。</InfoTip></strong>
+      <span>{TRANSPORT_TEXT[snapshot.transportStatus]} · {PROTOCOL_TEXT[snapshot.protocolStatus]}</span>
+      <span>{snapshot.lifecycle === "reading" ? "读取循环运行" : LIFECYCLE_TEXT[snapshot.lifecycle]}</span>
     </div>
     <div className="serial-actions">
       <button type="button" className="secondary" onClick={onSelect} disabled={!supported || snapshot.lifecycle === "reading" || busy}>{selectLabel}</button>

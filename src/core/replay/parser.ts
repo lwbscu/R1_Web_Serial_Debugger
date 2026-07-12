@@ -78,10 +78,21 @@ function looksLikeHeader(fields: string[]): boolean {
     normalized.some((field) => /^(x|y|yaw|frame|status|protocol|channel|signal)/.test(field));
 }
 
+function columnIndex(headers: readonly string[], requested: string | undefined): number {
+  if (!requested) return -1;
+  const normalized = normalizeHeader(requested);
+  const direct = headers.indexOf(normalized);
+  if (direct >= 0) return direct;
+  const positional = /^column_(\d+)$/.exec(normalized);
+  if (!positional) return -1;
+  const index = Number(positional[1]) - 1;
+  return Number.isInteger(index) && index >= 0 && index < headers.length ? index : -1;
+}
+
 function inferFormat(lines: string[], requested: ReplayFormat): Exclude<ReplayFormat, "auto"> {
   if (requested !== "auto") return requested;
   const sample = lines.find((line) => line.trim().length > 0) ?? "";
-  if (/^(?:\s*\[[^\]]+\]\s*)?(?:RDBG_TX|RDBG|CDBG|CEVT|RDBG_CFG|RDBG_CMD|CDBG_BOOT|\$R1M),/.test(sample)) {
+  if (/^(?:\s*\[[^\]]+\]\s*)?(?:RDBG_TX|RDBG|CDBG|CEVT|DBG_META|RDBG_CFG|RDBG_CMD|CDBG_BOOT|\$R1M),/.test(sample)) {
     return "raw";
   }
   return sample.includes(",") ? "csv" : "raw";
@@ -179,7 +190,8 @@ export function parseReplayText(text: string, options: ParseReplayOptions = {}):
     : firstFields.map((_, index) => `column_${index + 1}`);
   const requestedTimestamp = options.timestampColumn ? normalizeHeader(options.timestampColumn) : undefined;
   const timestampHeader = requestedTimestamp ?? headers.find((header) => TIMESTAMP_HEADERS.includes(header as (typeof TIMESTAMP_HEADERS)[number]));
-  const timestampIndex = timestampHeader ? headers.indexOf(timestampHeader) : -1;
+  const timestampIndex = requestedTimestamp ? columnIndex(headers, requestedTimestamp) : timestampHeader ? headers.indexOf(timestampHeader) : -1;
+  const payloadIndex = columnIndex(headers, options.payloadColumn);
 
   csvRecords.forEach(({ raw, lineNumber }, index) => {
     if (raw.length === 0 || (hasHeader && index === firstIndex)) return;
@@ -187,9 +199,9 @@ export function parseReplayText(text: string, options: ParseReplayOptions = {}):
     const columns = Object.fromEntries(headers.map((header, fieldIndex) => [header, fields[fieldIndex] ?? ""]));
     const observedAtMs =
       timestampIndex >= 0
-        ? parseDateOrNumber(fields[timestampIndex] ?? "", timestampHeader!, options.timestampUnit)
+        ? parseDateOrNumber(fields[timestampIndex] ?? "", timestampHeader ?? headers[timestampIndex]!, options.timestampUnit)
         : undefined;
-    rows.push({ lineNumber, raw, payload: raw, observedAtMs, columns });
+    rows.push({ lineNumber, raw, payload: payloadIndex >= 0 ? fields[payloadIndex] ?? "" : raw, observedAtMs, columns });
   });
   return monotonicRecords(rows, defaultIntervalMs);
 }

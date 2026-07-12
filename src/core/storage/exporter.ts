@@ -132,7 +132,7 @@ function exportCodexReadme(manifest: SessionManifest): Uint8Array {
     "- `remote_raw.log`: 遥控器串口原始行。常见内容包括 `RDBG` 摘要和 `RDBG_TX` 真实 NRF 发包事件。",
     "- `chassis_raw.log`: 底盘串口原始行。常见内容包括 `CDBG` 主诊断帧和 `CEVT` 事件。",
     "- `locator_raw.log` / `raw_serial.log`: 定位/码盘板串口原始行。",
-    "- `connection_status.csv`: 三串口连接状态变化，包含 role、health、lifecycle、RX 字节和帧数。",
+    "- `connection_status.csv`: 三串口连接状态变化，旧列保持 role、health、lifecycle、RX 字节和帧数，追加 transport/protocol 分层状态与计数。",
     "- `session.json` / `metadata.json`: 录制会话、版本、分卷和时间窗口元数据。",
     "",
     "## 快速串口包",

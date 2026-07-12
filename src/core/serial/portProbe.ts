@@ -51,6 +51,7 @@ export interface PortProbeOptions {
   settleMs?: number;
   signal?: AbortSignal;
   now?: () => number;
+  onRawLine?: (candidate: ProbeCandidate, line: string, observedAtMs: number) => void;
 }
 
 const ADAPTERS = {
@@ -80,6 +81,7 @@ function describe(error: unknown): string {
 }
 
 function parseEvidence(line: string, observedAtMs: number): ProbeEvidence[] {
+  if (line.includes("CEVT,")) return [];
   const accepted: ProbeEvidence[] = [];
   for (const [role, adapter] of Object.entries(ADAPTERS) as Array<[SourceRole, typeof ADAPTERS[SourceRole]]>) {
     const outcome: ParseOutcome<unknown> = adapter.parse(line, observedAtMs);
@@ -94,12 +96,20 @@ function parseEvidence(line: string, observedAtMs: number): ProbeEvidence[] {
   }
   if (accepted.length > 0) return accepted;
 
-  // Prefix detection is diagnostic only: it preserves a malformed protocol line as rejected evidence.
   const prefixedRole = detectProtocolRole(line);
   if (!prefixedRole) return [];
   const rejected = ADAPTERS[prefixedRole].parse(line, observedAtMs);
   if (rejected.kind !== "error") return [];
-  return [{ role: prefixedRole, line, outcome: "error", score: 0, detail: `${rejected.code}: ${rejected.detail}` }];
+  const prefixOnly = prefixedRole === "remote" || prefixedRole === "chassis" ||
+    (prefixedRole === "locator" && line.includes("$R1M,"));
+  return [{
+    role: prefixedRole,
+    line,
+    outcome: "error",
+    protocolVersion: prefixOnly ? "prefix-only" : undefined,
+    score: prefixOnly ? 1 : 0,
+    detail: `${rejected.code}: ${rejected.detail}`,
+  }];
 }
 
 function isStrongLocatorIdentity(line: string, protocolVersion: string, warnings: readonly string[]): boolean {
@@ -170,6 +180,7 @@ function waitForRead(
 }
 
 function hasConsistentFrames(result: PortProbeResult, role: SourceRole, minValidFrames: number): boolean {
+  if ((result.protocolEvidence[role]["prefix-only"] ?? 0) >= minValidFrames) return true;
   return result.validFrameCounts[role] >= minValidFrames
     && Object.values(result.protocolEvidence[role]).some((count) => count >= minValidFrames);
 }
@@ -220,12 +231,17 @@ export async function probePort(candidate: ProbeCandidate, options: PortProbeOpt
   let qualifiedAt: number | null = null;
   const accept = (line: string, warnings: readonly string[]): void => {
     if (!line || result.inspectedLines >= maxLines) return;
+    options.onRawLine?.(candidate, line, now());
     result.inspectedLines += 1;
     for (const warning of warnings) if (!result.framingWarnings.includes(warning)) result.framingWarnings.push(warning);
     const evidenceItems = parseEvidence(line, now());
     for (const evidence of evidenceItems) {
       if (result.evidence.length < maxLines) result.evidence.push(evidence);
       result.scores[evidence.role] += evidence.score;
+      if (evidence.outcome === "error" && evidence.protocolVersion === "prefix-only" && evidence.score > 0) {
+        const protocols = result.protocolEvidence[evidence.role];
+        protocols[evidence.protocolVersion] = (protocols[evidence.protocolVersion] ?? 0) + 1;
+      }
       if (evidence.outcome === "frame" && evidence.protocolVersion && evidence.score >= 3) {
         result.validFrameCounts[evidence.role] += 1;
         const protocols = result.protocolEvidence[evidence.role];

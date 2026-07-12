@@ -37,7 +37,7 @@ describe("Python-equivalent metric configuration", () => {
   it("defines every required metric with five tooltip sections", () => {
     expect(remoteMetricSpecs).toHaveLength(11);
     expect(chassisNrfMetricSpecs).toHaveLength(15);
-    expect(locationMetricSpecs).toHaveLength(19);
+    expect(locationMetricSpecs).toHaveLength(20);
     expect(wirelessReceiveMetricSpecs).toHaveLength(8);
     expect(modeSyncMetricSpecs).toHaveLength(4);
     expect(mechanismMetricSpecs).toHaveLength(5);
@@ -100,6 +100,10 @@ describe("Python-equivalent metric configuration", () => {
     expect(age.evaluator?.(501, context())).toBe("error");
     expect(panelStatus.location(context(remote(), chassis({ motorFaultMask: 1 })))).toBe("error");
     expect(panelStatus.location(context(remote(), chassis({ steerErr1: 31 })))).toBe("warn");
+    const driveError = spec(locationMetricSpecs, "drv_err");
+    expect(driveError.evaluator?.([0, 10, 20, -20], context())).toBe("normal");
+    expect(driveError.evaluator?.([0, 21, 0, 0], context())).toBe("warn");
+    expect(driveError.evaluator?.([0, 0, -51, 0], context())).toBe("error");
   });
 });
 

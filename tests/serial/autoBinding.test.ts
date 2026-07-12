@@ -9,8 +9,15 @@ function port(): ReadOnlySerialPort {
 
 function snapshot(role: SourceRole, lifecycle: PortLifecycle = "idle"): PortSnapshot {
   return {
-    role, lifecycle, health: "no-data", selected: lifecycle === "reading", portInfo: null,
-    lastByteAtMs: null, lastValidFrameAtMs: null, detectedRole: null, error: null,
+    role,
+    lifecycle,
+    health: "no-data",
+    transportStatus: lifecycle === "reading" ? "receiving" : "idle",
+    protocolStatus: "unknown",
+    selected: lifecycle === "reading",
+    portInfo: null,
+    lastByteAtMs: null, lastValidFrameAtMs: null, lastProtocolLineAtMs: null,
+    lastProtocolErrorAtMs: null, lastProtocolError: null, detectedRole: null, error: null,
     stats: { bytesReceived: 0, linesReceived: 0, validFrames: 0, parseErrors: 0, ignoredLines: 0, wrongRoleLines: 0 },
   };
 }

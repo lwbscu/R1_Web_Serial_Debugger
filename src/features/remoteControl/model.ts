@@ -178,21 +178,6 @@ function inEventWindow(event: ProtocolEvent, tx: RemoteTxEvent, nowMs: number): 
     nowMs - event.observedAtMs <= ACT_EVENT_WINDOW_AFTER_MS;
 }
 
-function eventMatchesActCommand(event: ProtocolEvent, tx: RemoteTxEvent): boolean {
-  if (tx.packetType !== "ACT") return false;
-  const [state, stage, exec, enabled] = tx.args;
-  return eventNumber(event, 1) === state &&
-    eventNumber(event, 2) === stage &&
-    eventNumber(event, 3) === exec &&
-    eventNumber(event, 4) === enabled;
-}
-
-function eventMatchesActFeedback(event: ProtocolEvent, tx: RemoteTxEvent): boolean {
-  if (tx.packetType !== "ACT") return false;
-  const [state, stage] = tx.args;
-  return eventNumber(event, 1) === state && eventNumber(event, 2) === stage;
-}
-
 function latestEvent(
   events: readonly ProtocolEvent[],
   kind: string,
@@ -207,23 +192,23 @@ function latestEvent(
   return null;
 }
 
-function latestMatchingActEvent(
+function latestCorrelatedActEvent(
   events: readonly ProtocolEvent[],
   kind: string,
   tx: RemoteTxEvent,
   nowMs: number,
   predicate: (event: ProtocolEvent) => boolean = () => true,
 ): ProtocolEvent | null {
-  return latestEvent(events, kind, tx, nowMs, (event) => eventMatchesActCommand(event, tx) && predicate(event));
+  return latestEvent(events, kind, tx, nowMs, predicate);
 }
 
-function latestMatchingActFeedbackEvent(
+function latestCorrelatedActFeedbackEvent(
   events: readonly ProtocolEvent[],
   tx: RemoteTxEvent,
   nowMs: number,
   predicate: (event: ProtocolEvent) => boolean = () => true,
 ): ProtocolEvent | null {
-  return latestEvent(events, "MECH_FB", tx, nowMs, (event) => eventMatchesActFeedback(event, tx) && predicate(event));
+  return latestEvent(events, "MECH_FB", tx, nowMs, predicate);
 }
 
 interface ActAckFeedback {
@@ -232,7 +217,6 @@ interface ActAckFeedback {
   stage: number;
   exec: number;
   enabled: number;
-  matchesCommand: boolean;
 }
 
 function decodeActAckFeedback(event: RemoteTxEvent): ActAckFeedback | null {
@@ -247,7 +231,6 @@ function decodeActAckFeedback(event: RemoteTxEvent): ActAckFeedback | null {
     stage,
     exec,
     enabled,
-    matchesCommand: state === event.args[0] && stage === event.args[1],
   };
 }
 
@@ -255,7 +238,7 @@ function ackSummary(event: RemoteTxEvent): string {
   if (event.ackLen <= 0) return "无 ACK payload";
   const feedback = decodeActAckFeedback(event);
   if (!feedback) return `${event.ackLen} byte`;
-  return `${event.ackLen} byte · ${feedback.matchesCommand ? "机构反馈对齐" : "可能是陈旧反馈"} · state=${feedback.state} · stage=${feedback.stage} · exec=${feedback.exec}`;
+  return `${event.ackLen} byte · 反馈状态 · state=${feedback.state} · stage=${feedback.stage} · exec=${feedback.exec}`;
 }
 
 function ackStep(event: RemoteTxEvent): EffectStep {
@@ -263,20 +246,12 @@ function ackStep(event: RemoteTxEvent): EffectStep {
   if (event.txRet === 2) return { key: "nrf_ack", label: "NRF ACK", status: "warn", detail: "发送成功但 ACK payload 为空。" };
   if (event.ackLen <= 0) return { key: "nrf_ack", label: "NRF ACK", status: "warn", detail: "发送成功但 ACK payload 为空。" };
   const feedback = decodeActAckFeedback(event);
-  if (feedback && feedback.matchesCommand) {
-    return {
-      key: "nrf_ack",
-      label: "NRF ACK / 机构回传",
-      status: "normal",
-      detail: `遥控器 ACK 已收到机构反馈：score=${feedback.score ?? "—"} · state=${feedback.state} · stage=${feedback.stage} · exec=${feedback.exec} · enabled=${feedback.enabled}。`,
-    };
-  }
   if (feedback) {
     return {
       key: "nrf_ack",
       label: "NRF ACK / 机构回传",
-      status: "warn",
-      detail: `ACK 内反馈 state=${feedback.state} · stage=${feedback.stage} · exec=${feedback.exec} · enabled=${feedback.enabled}，与本次 ACT 的 state/stage 不一致，可能是上一条动作反馈。`,
+      status: "normal",
+      detail: `ACK payload 带机构反馈状态：score=${feedback.score ?? "—"} · state=${feedback.state} · stage=${feedback.stage} · exec=${feedback.exec} · enabled=${feedback.enabled}；仅按时间邻近展示，不判定本次归属。`,
     };
   }
   return { key: "nrf_ack", label: "NRF ACK", status: "normal", detail: `ACK payload ${event.ackLen} byte。` };
@@ -288,12 +263,12 @@ function receiveStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events:
   if (event.packetType === "MODE" || event.packetType === "VMODE") return ageDetail("chassis_receive", numberField(chassis, "modeFrameAgeMs"), "底盘接收 MODE");
   if (event.packetType === "KEY") return ageDetail("chassis_receive", numberField(chassis, "keyAgeMs"), "底盘接收 KEY");
   if (event.packetType === "ACT") {
-    const cmdEvent = latestMatchingActEvent(events, "MECH_CMD", event, nowMs, (item) => eventNumber(item, 0) === 1 || eventNumber(item, 0) === 2);
+    const cmdEvent = latestCorrelatedActEvent(events, "MECH_CMD", event, nowMs, (item) => eventNumber(item, 0) === 1 || eventNumber(item, 0) === 2);
     if (cmdEvent) return {
       key: "chassis_receive",
       label: "底盘接收 ACT",
-      status: "normal",
-      detail: `看到 MECH_CMD phase=${eventNumber(cmdEvent, 0)} · ${eventPayloadText(cmdEvent)}，${eventAge(cmdEvent, nowMs)}。`,
+      status: "warn",
+      detail: `看到时间窗内 MECH_CMD · ${eventPayloadText(cmdEvent)}，${eventAge(cmdEvent, nowMs)}；遥控 tx_seq 未进入空口 payload，不能证明属于本次 ACT。`,
     };
     return ageDetail("chassis_receive", numberField(chassis, "taskFrameAgeMs"), "底盘接收 ACT");
   }
@@ -314,14 +289,14 @@ function receiveStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events:
 function appliedStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events: readonly ProtocolEvent[], nowMs: number): EffectStep {
   if (!chassis) return { key: "command_apply", label: "命令执行入口", status: "unknown", detail: "等待底盘 CDBG。" };
   if (event.packetType === "ACT") {
-    const dequeueEvent = latestMatchingActEvent(events, "MECH_CMD", event, nowMs, (item) => eventNumber(item, 0) === 3);
+    const dequeueEvent = latestCorrelatedActEvent(events, "MECH_CMD", event, nowMs, (item) => eventNumber(item, 0) === 3);
     if (dequeueEvent) return {
       key: "command_apply",
       label: "ACT 队列",
-      status: "normal",
-      detail: `已从 action 队列出队 · ${eventPayloadText(dequeueEvent)} · q=${eventNumber(dequeueEvent, 5) ?? "—"}，${eventAge(dequeueEvent, nowMs)}。`,
+      status: "warn",
+      detail: `时间窗内看到 action 队列出队 · ${eventPayloadText(dequeueEvent)} · q=${eventNumber(dequeueEvent, 5) ?? "—"}，${eventAge(dequeueEvent, nowMs)}；未与遥控 tx_seq 精确匹配。`,
     };
-    const enqueueEvent = latestMatchingActEvent(events, "MECH_CMD", event, nowMs, (item) => eventNumber(item, 0) === 1 || eventNumber(item, 0) === 2);
+    const enqueueEvent = latestCorrelatedActEvent(events, "MECH_CMD", event, nowMs, (item) => eventNumber(item, 0) === 1 || eventNumber(item, 0) === 2);
     if (enqueueEvent && eventNumber(enqueueEvent, 0) === 2) return {
       key: "command_apply",
       label: "ACT 队列",
@@ -331,14 +306,14 @@ function appliedStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events:
     if (enqueueEvent) return {
       key: "command_apply",
       label: "ACT 队列",
-      status: "normal",
-      detail: `已进入 action 队列 · ${eventPayloadText(enqueueEvent)} · q=${eventNumber(enqueueEvent, 5) ?? "—"}，等待出队事件。`,
+      status: "warn",
+      detail: `时间窗内看到 action 入队 · ${eventPayloadText(enqueueEvent)} · q=${eventNumber(enqueueEvent, 5) ?? "—"}；未与遥控 tx_seq 精确匹配。`,
     };
     const drop = numberField(chassis, "actionEnqueueDropCount");
     const outAge = numberField(chassis, "actionDequeueAgeMs");
     const ok = numberField(chassis, "actionEnqueueOkCount");
     if (drop !== null && drop > 0) return { key: "command_apply", label: "ACT 队列", status: "warn", detail: `action drop=${drop}，需看同一时刻 MECH_CMD。` };
-    if (outAge !== null && outAge <= 1000) return { key: "command_apply", label: "ACT 队列", status: "normal", detail: `已出队，age=${outAge} ms · enqueue_ok=${ok ?? "—"}` };
+    if (outAge !== null && outAge <= 1000) return { key: "command_apply", label: "ACT 队列", status: "warn", detail: `最近有出队，age=${outAge} ms · enqueue_ok=${ok ?? "—"}；汇总计数不能归属本次 ACT。` };
     return { key: "command_apply", label: "ACT 队列", status: "unknown", detail: `enqueue_ok=${ok ?? "—"} · dequeue_age=${outAge ?? "—"} ms` };
   }
   if (event.packetType === "MODE" || event.packetType === "VMODE") {
@@ -358,18 +333,18 @@ function appliedStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events:
 function usartStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events: readonly ProtocolEvent[], nowMs: number): EffectStep {
   if (event.packetType !== "ACT") return { key: "usart1_tx", label: "USART1 发给机构", status: "unknown", detail: "非 ACT 命令不经过机构 USART1。" };
   if (!chassis) return { key: "usart1_tx", label: "USART1 发给机构", status: "unknown", detail: "未连接底盘 CDBG，无法判断 USART1。" };
-  const doneEvent = latestMatchingActEvent(events, "MECH_TX", event, nowMs, (item) => eventNumber(item, 0) === 2);
+  const doneEvent = latestCorrelatedActEvent(events, "MECH_TX", event, nowMs, (item) => eventNumber(item, 0) === 2);
   if (doneEvent) {
     const status = eventNumber(doneEvent, 5);
     const duration = eventNumber(doneEvent, 6);
     return {
       key: "usart1_tx",
       label: "USART1 发给机构",
-      status: status === 0 ? "normal" : "error",
-      detail: `MECH_TX done · ${eventPayloadText(doneEvent)} · HAL=${status ?? "—"} · ${duration ?? "—"} ms，${eventAge(doneEvent, nowMs)}。`,
+      status: status === 0 ? "warn" : "error",
+      detail: `时间窗内 MECH_TX done · ${eventPayloadText(doneEvent)} · HAL=${status ?? "—"} · ${duration ?? "—"} ms，${eventAge(doneEvent, nowMs)}；仅底盘本地 cmd_seq 可关联，不能等同遥控 tx_seq。`,
     };
   }
-  const startEvent = latestMatchingActEvent(events, "MECH_TX", event, nowMs, (item) => eventNumber(item, 0) === 1);
+  const startEvent = latestCorrelatedActEvent(events, "MECH_TX", event, nowMs, (item) => eventNumber(item, 0) === 1);
   if (startEvent) return {
     key: "usart1_tx",
     label: "USART1 发给机构",
@@ -383,7 +358,7 @@ function usartStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events: r
   const duration = numberField(chassis, "mechTxLastDurationMs");
   if (inFlight !== null && inFlight > 1000) return { key: "usart1_tx", label: "USART1 发给机构", status: "error", detail: `USART1 发送 in-flight ${inFlight} ms，疑似阻塞。` };
   if (lastStatus !== null && lastStatus !== 0) return { key: "usart1_tx", label: "USART1 发给机构", status: "error", detail: `最近 USART1 HAL status=${lastStatus}。` };
-  if (ok !== null && ok > 0) return { key: "usart1_tx", label: "USART1 发给机构", status: "normal", detail: `MECH_TX done HAL=0 · ${duration ?? "—"} ms（CDBG 汇总）。` };
+  if (ok !== null && ok > 0) return { key: "usart1_tx", label: "USART1 发给机构", status: "warn", detail: `历史有 MECH_TX 成功 · ${duration ?? "—"} ms（CDBG 汇总），不能归属本次 ACT。` };
   if (fail !== null && fail > 0) return { key: "usart1_tx", label: "USART1 发给机构", status: "warn", detail: `历史发送失败 ${fail} 次，需看最近 MECH_TX。` };
   return { key: "usart1_tx", label: "USART1 发给机构", status: "unknown", detail: "尚未看到 MECH_TX；等待底盘 v3 事件或 CDBG 汇总。" };
 }
@@ -391,14 +366,14 @@ function usartStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events: r
 function mechanismStep(event: RemoteTxEvent, chassis: ChassisFrame | null, events: readonly ProtocolEvent[], nowMs: number): EffectStep {
   if (event.packetType !== "ACT") return { key: "mechanism_feedback", label: "机构反馈", status: "unknown", detail: "非 ACT 命令不经过机构链路。" };
   if (!chassis) return { key: "mechanism_feedback", label: "机构反馈", status: "unknown", detail: "未连接底盘 CDBG，无法判断机构反馈。" };
-  const feedbackEvent = latestMatchingActFeedbackEvent(events, event, nowMs);
+  const feedbackEvent = latestCorrelatedActFeedbackEvent(events, event, nowMs);
   if (feedbackEvent) {
     const phase = eventNumber(feedbackEvent, 0);
     if (phase === 1) return {
       key: "mechanism_feedback",
       label: "机构反馈",
-      status: "normal",
-      detail: `机构回传 ${eventPayloadText(feedbackEvent)} · checksum=${eventNumber(feedbackEvent, 5) ?? "—"}，${eventAge(feedbackEvent, nowMs)}。`,
+      status: "warn",
+      detail: `时间窗内看到机构有效回传 ${eventPayloadText(feedbackEvent)}，${eventAge(feedbackEvent, nowMs)}；机构 v1 无 echo sequence，归属可能不唯一。`,
     };
     if (phase === 2) return {
       key: "mechanism_feedback",
@@ -411,7 +386,7 @@ function mechanismStep(event: RemoteTxEvent, chassis: ChassisFrame | null, event
   if (badFeedback) return { key: "mechanism_feedback", label: "机构反馈", status: "error", detail: `MECH_FB 校验失败 calc=${eventNumber(badFeedback, 5) ?? "—"} rx=${eventNumber(badFeedback, 6) ?? "—"}。` };
   const fbAge = numberField(chassis, "mechFeedbackAgeMs");
   const rxAge = numberField(chassis, "uart1RxByteAgeMs");
-  if (fbAge !== null && fbAge <= 1500) return { key: "mechanism_feedback", label: "机构反馈", status: "normal", detail: `机构有效反馈 age=${fbAge} ms。` };
+  if (fbAge !== null && fbAge <= 1500) return { key: "mechanism_feedback", label: "机构反馈", status: "warn", detail: `机构有效反馈 age=${fbAge} ms；机构 v1 无 echo sequence，不能证明是本次 ACT。` };
   if (fbAge !== null && fbAge > 3000) return { key: "mechanism_feedback", label: "机构反馈", status: "error", detail: `${fbAge} ms 未看到有效机构反馈。` };
   if (fbAge !== null) return { key: "mechanism_feedback", label: "机构反馈", status: "warn", detail: `${fbAge} ms 未看到有效机构反馈。` };
   if (rxAge !== null && rxAge <= 1500) return { key: "mechanism_feedback", label: "机构反馈", status: "warn", detail: `USART1 有字节 age=${rxAge} ms，但未形成有效反馈。` };

@@ -19,20 +19,20 @@ function displayTime(at: number): string {
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hour12: false }).format(at);
 }
 
-const LIFECYCLE_TEXT: Record<PortSnapshot["lifecycle"], string> = {
-  idle: "待机",
-  requesting: "等待授权",
+const TRANSPORT_TEXT: Record<PortSnapshot["transportStatus"], string> = {
+  "not-selected": "未选择",
+  idle: "已授权未接收",
   opening: "正在打开",
-  reading: "正在接收",
+  receiving: "正在接收",
   closing: "正在关闭",
   error: "连接异常",
 };
 
-const HEALTH_TEXT: Record<PortSnapshot["health"], string> = {
-  "no-data": "尚无数据",
-  "bytes-only": "有字节",
-  valid: "数据正常",
-  stale: "数据过期",
+const PROTOCOL_TEXT: Record<PortSnapshot["protocolStatus"], string> = {
+  unknown: "协议未识别",
+  valid: "协议已匹配",
+  stale: "协议已过期",
+  mismatch: "协议不匹配",
   "wrong-role": "疑似错口",
 };
 
@@ -47,7 +47,7 @@ function deviceLabel(snapshot: PortSnapshot | null): string {
 }
 
 function portLifecycleLabel(snapshot: PortSnapshot | null): string {
-  return snapshot ? `${HEALTH_TEXT[snapshot.health]} · ${LIFECYCLE_TEXT[snapshot.lifecycle]}` : "等待初始化";
+  return snapshot ? `${TRANSPORT_TEXT[snapshot.transportStatus]} · ${PROTOCOL_TEXT[snapshot.protocolStatus]}` : "等待初始化";
 }
 
 function buildRemoteSerialStatus(
@@ -63,18 +63,24 @@ function buildRemoteSerialStatus(
     }
     return { status: "unknown", title: "浏览器不支持 Web Serial", detail: "实时串口需要 HTTPS 下的桌面版 Chrome / Edge。" };
   }
-  if (snapshot?.lifecycle === "reading" && snapshot.health === "valid") {
+  if (snapshot?.transportStatus === "receiving" && snapshot.protocolStatus === "valid") {
     return {
       status: "normal",
       title: "遥控器串口正在接收",
       detail: hasTx ? "RDBG 与 RDBG_TX 都在刷新，可直接看命令和协议数组。" : "RDBG 正在刷新；若要看协议数组，请烧录带 RDBG_TX 的遥控器固件。",
     };
   }
-  if (snapshot?.health === "wrong-role") {
+  if (snapshot?.protocolStatus === "wrong-role") {
     return { status: "error", title: "遥控器串口疑似选错", detail: `检测到 ${snapshot.detectedRole ?? "其他"} 协议，请在本侧栏重新选择遥控器调试串口。` };
   }
-  if (snapshot?.lifecycle === "reading") {
-    return { status: "warn", title: `遥控器串口${HEALTH_TEXT[snapshot.health]}`, detail: "端口已打开但尚未形成稳定 RDBG/RDBG_TX，请看 RX、帧和解析错误计数。" };
+  if (snapshot?.transportStatus === "receiving") {
+    if (snapshot.protocolStatus === "mismatch") {
+      return { status: "warn", title: "遥控器串口正在接收", detail: "串口已连接且正在接收原始字节，但尚未匹配 RDBG/RDBG_TX；请看 RX、原始日志和解析错误计数。" };
+    }
+    if (snapshot.protocolStatus === "stale") {
+      return { status: "warn", title: "遥控器串口正在接收", detail: "端口仍在接收，但有效 RDBG/RDBG_TX 已超过 1.5 秒未刷新。" };
+    }
+    return { status: "warn", title: "遥控器串口正在接收", detail: "端口已打开但尚未形成稳定 RDBG/RDBG_TX，请看 RX、帧和解析错误计数。" };
   }
   if (snapshot?.error) {
     return { status: "error", title: "遥控器串口连接异常", detail: snapshot.error };
@@ -231,7 +237,7 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
       kicker="REMOTE COMMAND OBSERVER"
       title="遥控器窗口"
       description="给操作手看的实时命令面板：把遥控器发出的命令、真实协议字节、NRF ACK、底盘接收和机构反馈放在同一条链路里。"
-      meta={<><span>RDBG 兼容</span><span>RDBG_TX v1 payload</span><span>只读观察，不发送串口数据</span></>}
+      meta={<><span>RDBG 兼容</span><span>RDBG_TX v1/v2 payload</span><span>只读观察，不发送串口数据</span></>}
       actions={<><button type="button" className={demoActive ? "selected" : "secondary"} onClick={() => setDemoActive((value) => !value)}>{demoActive ? "停止演示" : "演示遥控器窗口"}</button><button type="button" className="secondary" onClick={() => remoteDebugStore.clear()}>清空窗口</button></>}
     />
 

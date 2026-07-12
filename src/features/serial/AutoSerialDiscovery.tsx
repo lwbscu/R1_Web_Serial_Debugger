@@ -27,6 +27,7 @@ export interface AutoSerialDiscoveryProps {
   onRoleBound?: (role: SourceRole, mode: "single" | "batch") => void;
   onBatchComplete?: (roles: SourceRole[]) => void;
   showLaunch?: boolean;
+  onProbeRawLine?: (deviceId: string, line: string, observedAtMs: number) => void;
 }
 
 function validFrameTotal(result: PortProbeResult): number {
@@ -38,7 +39,7 @@ function roleText(result: PortProbeResult): string {
   return ROLE_LABELS[result.role];
 }
 
-export function AutoSerialDiscovery({ onRoleBound, onBatchComplete, showLaunch = true }: AutoSerialDiscoveryProps = {}) {
+export function AutoSerialDiscovery({ onRoleBound, onBatchComplete, showLaunch = true, onProbeRawLine }: AutoSerialDiscoveryProps = {}) {
   const api = useMemo(() => typeof navigator === "undefined" || typeof window === "undefined" || !window.isSecureContext ? null : browserSerialApi(), []);
   const openRequestId = useSyncExternalStore(discoveryDialogStore.subscribe, discoveryDialogStore.snapshot, discoveryDialogStore.snapshot);
   const [open, setOpen] = useState(false);
@@ -63,7 +64,10 @@ export function AutoSerialDiscovery({ onRoleBound, onBatchComplete, showLaunch =
   };
 
   const inspectCandidates = async (candidates: ProbeCandidate[], signal: AbortSignal): Promise<DiscoveryRow[]> => {
-    const results = await probePorts(candidates, { signal });
+    const results = await probePorts(candidates, {
+      signal,
+      onRawLine: (candidate, line, observedAtMs) => onProbeRawLine?.(candidate.id, line, observedAtMs),
+    });
     const discovered: DiscoveryRow[] = [];
     for (const result of results) {
       const candidate = candidates.find((item) => item.id === result.id);

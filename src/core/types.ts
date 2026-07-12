@@ -8,7 +8,9 @@ export type PortLifecycle =
   | "closing"
   | "error";
 
-export type DataHealth = "no-data" | "bytes-only" | "valid" | "stale" | "wrong-role";
+export type DataHealth = "no-data" | "bytes-only" | "format-mismatch" | "valid" | "stale" | "wrong-role";
+export type TransportStatus = "not-selected" | "idle" | "opening" | "receiving" | "closing" | "error";
+export type ProtocolStatus = "unknown" | "valid" | "stale" | "mismatch" | "wrong-role";
 
 export interface ProtocolEvent {
   source: SourceRole;

@@ -2,7 +2,16 @@ import type { SourceRole } from "../core/types";
 
 export function detectProtocolRole(line: string): SourceRole | null {
   if (/RDBG_TX,|RDBG_CFG,|RDBG_CMD,|RDBG,/.test(line)) return "remote";
-  if (/CDBG_BOOT,|CDBG,|CEVT,/.test(line)) return "chassis";
+  const metaMarker = line.indexOf("DBG_META,");
+  if (metaMarker >= 0) {
+    const meta = line.slice(metaMarker).trim().split(",");
+    if (meta[4] === "remote" || meta[4] === "chassis" || meta[4] === "locator") return meta[4];
+    return null;
+  }
+  if (/CDBG_BOOT,|CDBG,/.test(line)) return "chassis";
+  // CEVT is intentionally role-neutral. A preceding role-specific frame or
+  // DBG_META binds the port; an event alone must never migrate a session.
+  if (/CEVT,/.test(line)) return null;
   if (/\$R1M,/.test(line)) return "locator";
   const text = line.trim();
   if (!text || !text.includes(",")) return null;

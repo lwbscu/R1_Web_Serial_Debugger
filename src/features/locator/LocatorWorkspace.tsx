@@ -88,7 +88,6 @@ export function LocatorWorkspace({
 
   const onSerial = useCallback((received: ReceivedLine<LocatorFrame>) => {
     setLogs((old) => [...old, received.line].slice(-2000));
-    void recorder.append("locator_raw.log", `[${Date.now() / 1000}] ${received.line}\n`);
     if (received.outcome.kind === "frame") {
       consumeFrame(received.outcome.frame);
       void recorder.append("locator_frames.csv", encodeCsvRow([Date.now(), received.line]));
@@ -110,13 +109,16 @@ export function LocatorWorkspace({
     if (clockRef.current) setReplay(clockRef.current.snapshot);
     telemetryHub.releaseSource("locator", "replay");
   }, []);
+  const recordRaw = useCallback((received: { line: string }) => {
+    void recorder.append("locator_raw.log", `${Date.now()},${received.line}\n`);
+  }, [recorder]);
 
   const port = usePortSession<LocatorFrame>("locator", adapter, onSerial, () => {
     stopDemo();
     stopReplay();
     setFrame(null);
     setTrails(EMPTY_TRAILS);
-  });
+  }, recordRaw);
   const { select: selectLocatorPort, connect: connectLocatorPort, close: closeLocatorPort } = port;
 
   useEffect(() => {

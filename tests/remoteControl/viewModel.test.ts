@@ -46,11 +46,11 @@ const actEvents = (): ProtocolEvent[] => [
 describe("remote command view model", () => {
   it("highlights a successful ACT through ACK, chassis, queue, USART1, and feedback", () => {
     const view = buildRemoteCommandView(remote(), chassis(), tx(), 1500, actEvents());
-    expect(view.primaryStatus).toBe("normal");
+    expect(view.primaryStatus).toBe("warn");
     expect(view.headlineLabel).toBe("当前动作指令");
     expect(view.title).toContain("ACT");
     expect(view.txHex).toContain("5B");
-    expect(view.ackResult).toContain("机构反馈对齐");
+    expect(view.ackResult).toContain("反馈状态");
     expect(view.ackResult).toContain("state=2");
     expect(view.args).toEqual([
       { label: "state", value: "2" },
@@ -68,12 +68,15 @@ describe("remote command view model", () => {
     expect(view.steps[0]).toMatchObject({ key: "remote_tx", status: "error" });
   });
 
-  it("warns when ACT ACK feedback state/stage does not match the transmitted args", () => {
+  it("shows ACT ACK feedback as time-correlated status without declaring sequence match", () => {
     const view = buildRemoteCommandView(remote(), chassis(), tx({ ackBytes: [0x87, 0x5C, 9, 1, 1, 1], ackHex: "875C09010101" }), 1500, actEvents());
     expect(view.primaryStatus).toBe("warn");
-    expect(view.ackResult).toContain("可能是陈旧反馈");
+    expect(view.ackResult).toContain("反馈状态");
     expect(view.ackResult).toContain("state=9");
-    expect(view.steps.find((step) => step.key === "nrf_ack")).toMatchObject({ status: "warn" });
+    expect(view.ackResult).not.toContain("匹配");
+    expect(view.steps.find((step) => step.key === "nrf_ack")).toMatchObject({ status: "normal" });
+    expect(view.steps.find((step) => step.key === "nrf_ack")?.detail).toContain("仅按时间邻近展示");
+    expect(view.steps.find((step) => step.key === "nrf_ack")?.detail).not.toContain("匹配");
   });
 
   it("treats mechanism feedback exec as returned status, not an ACK echo mismatch", () => {
@@ -91,7 +94,7 @@ describe("remote command view model", () => {
       event("MECH_FB", [1, 2, 1, 3, 1, 6, 6], 1320),
     ];
     const view = buildRemoteCommandView(remote(), chassis(), request, 1500, events);
-    expect(view.primaryStatus).toBe("normal");
+    expect(view.primaryStatus).toBe("warn");
     expect(view.ackResult).toContain("exec=3");
     expect(view.steps.find((step) => step.key === "nrf_ack")?.detail).toContain("exec=3");
     expect(view.steps.find((step) => step.key === "mechanism_feedback")?.detail).toContain("exec=3");

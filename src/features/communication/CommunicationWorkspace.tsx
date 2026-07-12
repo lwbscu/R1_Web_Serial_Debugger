@@ -82,7 +82,8 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
     const at = Date.now();
     const value: RemoteTxEvent = { ...input, observedAtMs: at };
     remoteDebugStore.publishTx(value);
-    const row: StructuredRow = { at, role: "remote", seq: value.seq, summary: `RDBG_TX ${value.packetType} · ${value.txLen}B · ret ${value.txRet} · ACK ${value.ackLen}B` };
+    const fail = value.failReason ? ` · ${value.failReason}` : "";
+    const row: StructuredRow = { at, role: "remote", seq: value.seq, summary: `RDBG_TX v${value.protocolVersion} ${value.packetType} · ${value.txLen}B · ret ${value.txRet}${fail} · ACK ${value.ackLen}B` };
     setFrames((old) => [...old, row].slice(-2000));
     if (origin !== "demo") void recorder.append("remote_rdbg_tx.csv", encodeCsvRow([at, value.rawLine]));
   }, [recorder]);
@@ -107,7 +108,6 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
     const at = Date.now();
     setLogs((old) => [...old, { at, role, line: received.line, result: received.outcome.kind }].slice(-2000));
     remoteDebugStore.publishLog({ at, role, line: received.line, result: received.outcome.kind });
-    void recorder.append(role === "remote" ? "remote_raw.log" : "chassis_raw.log", `${at},${received.line}\n`);
     if (received.outcome.kind === "frame") {
       if (role === "remote") acceptRemote(received.outcome.frame as RemoteFrame);
       else acceptChassis(received.outcome.frame as ChassisFrame);
@@ -166,14 +166,21 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
     telemetryHub.releaseSource("chassis", "serial");
   }, []);
 
+  const recordRemoteRaw = useCallback((received: { line: string }) => {
+    void recorder.append("remote_raw.log", `${Date.now()},${received.line}\n`);
+  }, [recorder]);
+  const recordChassisRaw = useCallback((received: { line: string }) => {
+    void recorder.append("chassis_raw.log", `${Date.now()},${received.line}\n`);
+  }, [recorder]);
+
   const remotePort = usePortSession<RemoteFrame>("remote", remoteAdapter, handle("remote"), () => {
     stopDemo();
     resetRemote();
-  });
+  }, recordRemoteRaw);
   const chassisPort = usePortSession<ChassisFrame>("chassis", chassisAdapter, handle("chassis"), () => {
     stopDemo();
     resetChassis();
-  });
+  }, recordChassisRaw);
   const { supported: remoteSupported, snapshot: remoteSnapshot } = remotePort;
   const { supported: chassisSupported, snapshot: chassisSnapshot } = chassisPort;
   const { connect: connectRemotePort, close: closeRemotePort } = remotePort;
@@ -263,7 +270,7 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
 
   return <main className="workspace communication-workspace" data-testid="communication-workspace">
     <WorkspaceHeader kicker="R1 LINK DIAGNOSTICS" title="双串口通信诊断" description="严格对拍本地 Python 上位机：端口健康与业务诊断分层显示，悬停任一指标可查看阈值、异常判断和排查路径。"
-      meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 / v3-151 / v4-159 / v5-175 fields</span><span>stale 1.5 s</span></>}
+      meta={<><span>RDBG · RDBG_TX v1/v2</span><span>CDBG 30/35/72/90/v3/v4/legacy158/v5/v6-179</span><span>CEVT v1/v2 · DBG_META</span><span>stale 1.5 s</span></>}
       actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className="secondary" onClick={requestOpenSerialDiscovery}>智能连接串口</button><InfoTip label="统一录制说明">三串口统一录制按钮在左侧“三串口连接中心”。录制会同时包含遥控器、底盘和码盘/定位板；未连接角色写入 not_connected，后续接入会自动续录。</InfoTip></>} />
 
     {!remotePort.supported && <div className="unsupported">实时串口需要桌面版 Chrome/Edge 和 HTTPS。当前仍可使用演示数据查看完整诊断界面。</div>}

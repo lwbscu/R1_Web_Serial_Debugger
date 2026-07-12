@@ -28,6 +28,7 @@ export type GlobalArtifact =
   | "chassis_cdbg.csv"
   | "chassis_cevt.csv"
   | "locator_raw.log"
+  | "raw_serial.log"
   | "locator_frames.csv"
   | "locator_display_frames.csv"
   | "events.csv"
@@ -44,8 +45,11 @@ export interface SessionManifest {
   startedAt: string;
   sourceCommits?: {
     remote?: string;
+    chassis?: string;
     locator?: string;
   };
+  /** Delivery candidates only. Actual flashed identity must come from DBG_META or the Windows session note. */
+  expectedSourceCommits?: Record<string, string>;
   parserVersions?: Record<string, string>;
   locatorCoordinates?: LocatorCoordinateContext;
   notes?: string;
@@ -124,6 +128,7 @@ const GLOBAL_ARTIFACTS: readonly GlobalArtifact[] = [
   "chassis_cdbg.csv",
   "chassis_cevt.csv",
   "locator_raw.log",
+  "raw_serial.log",
   "locator_frames.csv",
   "locator_display_frames.csv",
   "events.csv",

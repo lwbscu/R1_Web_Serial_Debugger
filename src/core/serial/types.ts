@@ -1,4 +1,4 @@
-import type { DataHealth, ParseOutcome, PortLifecycle, SourceRole } from "../types";
+import type { DataHealth, ParseOutcome, PortLifecycle, ProtocolStatus, SourceRole, TransportStatus } from "../types";
 
 export interface SerialReaderLike {
   read(): Promise<ReadableStreamReadResult<Uint8Array>>;
@@ -41,10 +41,15 @@ export interface PortSnapshot {
   role: SourceRole;
   lifecycle: PortLifecycle;
   health: DataHealth;
+  transportStatus: TransportStatus;
+  protocolStatus: ProtocolStatus;
   selected: boolean;
   portInfo: { usbVendorId?: number; usbProductId?: number } | null;
   lastByteAtMs: number | null;
   lastValidFrameAtMs: number | null;
+  lastProtocolLineAtMs: number | null;
+  lastProtocolErrorAtMs: number | null;
+  lastProtocolError: string | null;
   detectedRole: SourceRole | null;
   error: string | null;
   stats: PortStats;
@@ -57,6 +62,8 @@ export interface ReceivedLine<T> {
   outcome: ParseOutcome<T>;
 }
 
+export type RawReceivedLine = Omit<ReceivedLine<never>, "outcome">;
+
 export interface PortSessionOptions<T> {
   role: SourceRole;
   provider: SerialPortProvider;
@@ -66,6 +73,8 @@ export interface PortSessionOptions<T> {
   staleAfterMs?: number;
   wrongRoleThreshold?: number;
   now?: () => number;
+  /** Runs before role detection and protocol parsing so recording never depends on parser compatibility. */
+  onRawLine?: (received: RawReceivedLine) => void;
   onLine?: (received: ReceivedLine<T>) => void;
   onChange?: (snapshot: PortSnapshot) => void;
   onWrongRole?: (event: {

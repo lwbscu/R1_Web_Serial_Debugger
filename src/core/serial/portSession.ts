@@ -28,6 +28,9 @@ export class PortSession<T> {
   private lifecycle: PortLifecycle = "idle";
   private lastByteAtMs: number | null = null;
   private lastValidFrameAtMs: number | null = null;
+  private lastProtocolLineAtMs: number | null = null;
+  private lastProtocolErrorAtMs: number | null = null;
+  private lastProtocolError: string | null = null;
   private detectedRole: SourceRole | null = null;
   private error: string | null = null;
   private stats = EMPTY_STATS();
@@ -127,10 +130,15 @@ export class PortSession<T> {
       role: this.role,
       lifecycle: this.lifecycle,
       health: this.health(now),
+      transportStatus: this.transportStatus(),
+      protocolStatus: this.protocolStatus(now),
       selected: this.port !== null,
       portInfo: this.port?.getInfo?.() ?? null,
       lastByteAtMs: this.lastByteAtMs,
       lastValidFrameAtMs: this.lastValidFrameAtMs,
+      lastProtocolLineAtMs: this.lastProtocolLineAtMs,
+      lastProtocolErrorAtMs: this.lastProtocolErrorAtMs,
+      lastProtocolError: this.lastProtocolError,
       detectedRole: this.detectedRole,
       error: this.error,
       stats: { ...this.stats },
@@ -172,6 +180,7 @@ export class PortSession<T> {
   private handleLine(line: string, framingWarnings: string[], observedAtMs: number): void {
     if (line.length === 0) return;
     this.stats.linesReceived += 1;
+    this.options.onRawLine?.({ line, observedAtMs, framingWarnings });
     const detectedRole = detectProtocolRole(line);
     if (detectedRole && detectedRole !== this.role) {
       this.detectedRole = detectedRole;
@@ -191,12 +200,26 @@ export class PortSession<T> {
       this.consecutiveWrongRole = 0;
       this.wrongRoleNotified = false;
     }
-    const outcome: ParseOutcome<T> = this.options.adapter.parse(line, observedAtMs);
+    let outcome: ParseOutcome<T>;
+    try {
+      outcome = this.options.adapter.parse(line, observedAtMs);
+    } catch (error) {
+      outcome = {
+        kind: "error",
+        code: "parser_exception",
+        detail: error instanceof Error ? error.message : String(error),
+      };
+    }
     if (outcome.kind === "frame") {
       this.stats.validFrames += 1;
       this.lastValidFrameAtMs = observedAtMs;
+      this.lastProtocolLineAtMs = observedAtMs;
+    } else if (outcome.kind === "event") {
+      this.lastProtocolLineAtMs = observedAtMs;
     } else if (outcome.kind === "error") {
       this.stats.parseErrors += 1;
+      this.lastProtocolErrorAtMs = observedAtMs;
+      this.lastProtocolError = `${outcome.code}: ${outcome.detail}`;
     } else if (outcome.kind === "ignored") {
       this.stats.ignoredLines += 1;
     }
@@ -206,10 +229,34 @@ export class PortSession<T> {
   private health(now: number): DataHealth {
     if (this.lifecycle !== "reading") return "no-data";
     if (this.consecutiveWrongRole >= this.options.wrongRoleThreshold) return "wrong-role";
-    if (this.lastValidFrameAtMs !== null) {
-      return now - this.lastValidFrameAtMs > this.options.staleAfterMs ? "stale" : "valid";
+    if (this.latestProtocolResultIsError()) return "format-mismatch";
+    if (this.lastProtocolLineAtMs !== null) {
+      return now - this.lastProtocolLineAtMs > this.options.staleAfterMs ? "stale" : "valid";
     }
     return this.lastByteAtMs === null ? "no-data" : "bytes-only";
+  }
+
+  private transportStatus(): PortSnapshot["transportStatus"] {
+    if (!this.port) return "not-selected";
+    if (this.lifecycle === "opening" || this.lifecycle === "requesting") return "opening";
+    if (this.lifecycle === "reading") return "receiving";
+    if (this.lifecycle === "closing") return "closing";
+    if (this.lifecycle === "error") return "error";
+    return "idle";
+  }
+
+  private protocolStatus(now: number): PortSnapshot["protocolStatus"] {
+    if (this.consecutiveWrongRole >= this.options.wrongRoleThreshold) return "wrong-role";
+    if (this.latestProtocolResultIsError()) return "mismatch";
+    if (this.lastProtocolLineAtMs !== null) {
+      return now - this.lastProtocolLineAtMs > this.options.staleAfterMs ? "stale" : "valid";
+    }
+    return "unknown";
+  }
+
+  private latestProtocolResultIsError(): boolean {
+    return this.lastProtocolErrorAtMs !== null &&
+      (this.lastProtocolLineAtMs === null || this.lastProtocolErrorAtMs >= this.lastProtocolLineAtMs);
   }
 
   private async closeInternal(): Promise<void> {
@@ -253,6 +300,9 @@ export class PortSession<T> {
     this.stats = EMPTY_STATS();
     this.lastByteAtMs = null;
     this.lastValidFrameAtMs = null;
+    this.lastProtocolLineAtMs = null;
+    this.lastProtocolErrorAtMs = null;
+    this.lastProtocolError = null;
     this.detectedRole = null;
     this.consecutiveWrongRole = 0;
     this.wrongRoleNotified = false;

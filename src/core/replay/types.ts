@@ -17,6 +17,8 @@ export interface ParseReplayOptions {
   format?: ReplayFormat;
   defaultIntervalMs?: number;
   timestampColumn?: string;
+  /** Column containing protocol text. Defaults to the full source row. */
+  payloadColumn?: string;
   /** Unit used for numeric timestamp columns. Defaults from the header name. */
   timestampUnit?: "milliseconds" | "seconds";
 }

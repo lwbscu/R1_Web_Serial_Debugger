@@ -530,7 +530,7 @@ export function useRecorder(kind: RecordingKind): RecorderController {
         kind,
         recordingProfile: profileRef.current,
         startedAt: new Date().toISOString(),
-        sourceCommits: { remote: BUILD_INFO.remoteSource, locator: BUILD_INFO.locatorSource },
+        expectedSourceCommits: BUILD_INFO.expectedSources,
         parserVersions: BUILD_INFO.parsers,
         ...(extras.notes === undefined ? {} : { notes: extras.notes }),
         ...(extras.locatorCoordinates === undefined ? {} : { locatorCoordinates: extras.locatorCoordinates }),

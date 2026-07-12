@@ -78,7 +78,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .serial-role-list { display: grid; gap: 6px; }
 .serial-role-card { display: grid; gap: 7px; padding: 8px; border: 1px solid #1b2c38; border-left: 3px solid var(--unknown); border-radius: 9px; background: #08131c; }
 .serial-role-card[data-health="valid"] { border-left-color: var(--ok); }
-.serial-role-card[data-health="bytes-only"], .serial-role-card[data-health="stale"] { border-left-color: var(--warn); }
+.serial-role-card[data-health="bytes-only"], .serial-role-card[data-health="format-mismatch"], .serial-role-card[data-health="stale"] { border-left-color: var(--warn); }
 .serial-role-card[data-health="wrong-role"] { border-left-color: var(--error); }
 .serial-role-card > div:first-child { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 7px; align-items: center; }
 .serial-role-card .status-orb { grid-row: 1 / span 2; margin: 0; }
@@ -131,7 +131,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .serial-connection:hover, .serial-connection:focus-within { z-index: 90; }
 .serial-connection::before { content: ""; position: absolute; inset: -1px auto -1px -1px; width: 3px; border-radius: 11px 0 0 11px; background: var(--unknown); }
 .serial-connection[data-health="valid"]::before { background: var(--ok); box-shadow: 0 0 14px rgba(50, 213, 131, .34); }
-.serial-connection[data-health="bytes-only"]::before, .serial-connection[data-health="stale"]::before { background: var(--warn); }
+.serial-connection[data-health="bytes-only"]::before, .serial-connection[data-health="format-mismatch"]::before, .serial-connection[data-health="stale"]::before { background: var(--warn); }
 .serial-connection[data-health="wrong-role"]::before { background: var(--error); }
 .serial-identity { display: flex; align-items: center; gap: 11px; }
 .serial-identity > div, .serial-device, .serial-health { display: grid; gap: 3px; min-width: 0; }
@@ -143,7 +143,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .serial-health > strong { color: #bfd0dc; font-size: 12px; }
 .status-orb, .status-dot { display: inline-block; flex: 0 0 auto; width: 9px; height: 9px; margin-right: 7px; border-radius: 50%; background: var(--unknown); box-shadow: 0 0 0 4px rgba(145, 164, 183, .08); }
 .status-orb.valid, .status-dot.valid { background: var(--ok); box-shadow: 0 0 0 4px rgba(50, 213, 131, .08), 0 0 12px rgba(50, 213, 131, .35); }
-.status-orb.stale, .status-orb.bytes-only, .status-dot.stale, .status-dot.bytes-only { background: var(--warn); }
+.status-orb.stale, .status-orb.bytes-only, .status-orb.format-mismatch, .status-dot.stale, .status-dot.bytes-only, .status-dot.format-mismatch { background: var(--warn); }
 .status-orb.wrong-role, .status-dot.wrong-role { background: var(--error); }
 .serial-actions { display: flex; gap: 7px; justify-content: flex-end; }
 .serial-actions .serial-advanced-select { padding-inline: 8px; font-size: 10px; }
