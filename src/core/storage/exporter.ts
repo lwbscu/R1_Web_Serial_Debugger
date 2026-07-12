@@ -60,7 +60,12 @@ function concatenate(parts: Uint8Array[]): Uint8Array {
 }
 
 function zipCompressionLevel(level: ExportSessionOptions["compressionLevel"]): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 {
-  return level ?? 6;
+  return level ?? 0;
+}
+
+function exportCompressionLevel(manifest: SessionManifest, level: ExportSessionOptions["compressionLevel"]): 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 {
+  if (manifest.recordingProfile === "quickSerial") return 0;
+  return zipCompressionLevel(level);
 }
 
 function groupSegments(segments: StoredSegment[], maxVolumeBytes: number): StoredSegment[][] {
@@ -202,7 +207,7 @@ async function buildZipVolume(
   try {
     for (const artifact of artifactsForExport(manifest)) {
       if (artifact === metadataName) continue;
-      const level = zipCompressionLevel(compressionLevel);
+      const level = exportCompressionLevel(manifest, compressionLevel);
       const file = level === 0
         ? new ZipPassThrough(artifact)
         : new AsyncZipDeflate(artifact, { level });
@@ -217,8 +222,8 @@ async function buildZipVolume(
       file.push(new Uint8Array(), true);
     }
     await onCompressing();
-    addZipFile(archive, metadataName, metadata, compressionLevel);
-    addZipFile(archive, CODEX_README_NAME, exportCodexReadme(manifest), compressionLevel);
+    addZipFile(archive, metadataName, metadata, exportCompressionLevel(manifest, compressionLevel));
+    addZipFile(archive, CODEX_README_NAME, exportCodexReadme(manifest), exportCompressionLevel(manifest, compressionLevel));
     archive.end();
     return await done;
   } catch (error) {

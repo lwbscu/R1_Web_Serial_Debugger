@@ -114,7 +114,7 @@ function addStats(left: PendingStats, right: PendingStats): PendingStats {
 
 function progressLabel(progress: ExportSessionProgress): string {
   if (progress.phase === "reading") return `后台读取录制分片 ${progress.volumeIndex}/${progress.volumeTotal}`;
-  if (progress.phase === "compressing") return `后台压缩 ZIP ${progress.volumeIndex}/${progress.volumeTotal}`;
+  if (progress.phase === "compressing") return `后台打包 ZIP ${progress.volumeIndex}/${progress.volumeTotal}`;
   if (progress.phase === "ready") return `ZIP 已生成 ${progress.volumeIndex}/${progress.volumeTotal}`;
   return "下载已触发";
 }
