@@ -25,13 +25,6 @@ export interface FieldRectangle {
   visualOnly?: boolean;
 }
 
-export interface NineGongStartPose extends Pose {
-  side: "red" | "blue";
-  label: string;
-  sideBoundaryDistanceCm: number;
-  lowerBoundaryDistanceCm: number;
-}
-
 export const FIELD_SEGMENTS: readonly FieldSegment[] = [
   { name: "field_left", type: "usable_wall", a: { x: -607.5, y: -605 }, b: { x: -607.5, y: 605 } },
   { name: "field_right", type: "usable_wall", a: { x: 607.5, y: -605 }, b: { x: 607.5, y: 605 } },
@@ -58,27 +51,6 @@ export const FIELD_RECTANGLES: readonly FieldRectangle[] = [
   { name: "bottom_center_barrier_wall", type: "usable_wall", center: { x: -1.25, y: -473.75 }, width: 28, height: 161 },
   { name: "top_red_start_zone_marker", type: "start_zone", center: { x: -552.5, y: 549 }, width: 100, height: 100, visualOnly: true },
   { name: "top_blue_start_zone_marker", type: "start_zone", center: { x: 548.5, y: 548 }, width: 100, height: 100, visualOnly: true },
-] as const;
-
-export const NINE_GONG_START_POSES: readonly [NineGongStartPose, NineGongStartPose] = [
-  {
-    side: "red",
-    label: "红区 9gong 起点",
-    x: -547.5,
-    y: -389,
-    yawDeg: 90,
-    sideBoundaryDistanceCm: 60,
-    lowerBoundaryDistanceCm: 44.5,
-  },
-  {
-    side: "blue",
-    label: "蓝区 9gong 起点",
-    x: 547.5,
-    y: -389,
-    yawDeg: 270,
-    sideBoundaryDistanceCm: 60,
-    lowerBoundaryDistanceCm: 44.5,
-  },
 ] as const;
 
 export interface Dt35Mount {

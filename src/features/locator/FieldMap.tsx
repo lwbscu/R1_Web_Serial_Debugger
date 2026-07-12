@@ -3,9 +3,12 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as Re
 import type { LocatorFrame } from "../../protocols";
 import {
   fieldToLocal,
+  LOCATOR_START_POSES,
   localToField,
   projectLocatorFrameToField,
   type LocatorCoordinateContext,
+  type LocatorMatchType,
+  type LocatorStartPose,
 } from "../../core/locator";
 import {
   DT35_MOUNTS,
@@ -14,7 +17,6 @@ import {
   FIELD_RECTANGLES,
   FIELD_SEGMENTS,
   FIELD_WIDTH_CM,
-  NINE_GONG_START_POSES,
   bodyToWorld,
   canvasToWorld,
   computeDt35Ray,
@@ -27,12 +29,12 @@ import {
   type Dt35Ray,
   type FieldSegment,
   type MapViewport,
-  type NineGongStartPose,
+  type Pose,
   type Point,
 } from "./geometry";
 
 export interface MapTrails { final: LocatorFrame[]; calib: LocatorFrame[]; lidar: LocatorFrame[] }
-export type MapLayer = "pos" | "calib" | "lidar" | "dt35" | "field_model" | "nine_gong_start" | "grid" | "axes";
+export type MapLayer = "pos" | "calib" | "lidar" | "dt35" | "field_model" | "match_start" | "grid" | "axes";
 
 export interface FieldMapProps {
   frame: LocatorFrame | null;
@@ -45,10 +47,10 @@ export interface FieldMapProps {
 
 const MAP_ASSET = "/assets/map/field_prior_map_clean_labeled_1215x1210cm.png";
 const ROBOT_ASSET = "/assets/map/r1_chassis_830mm_texture_1024.png";
-const ALL_LAYERS: readonly MapLayer[] = ["pos", "calib", "lidar", "dt35", "field_model", "nine_gong_start", "grid", "axes"];
+const ALL_LAYERS: readonly MapLayer[] = ["pos", "calib", "lidar", "dt35", "field_model", "match_start", "grid", "axes"];
 const LAYER_LABELS: Record<MapLayer, string> = {
   pos: "Final", calib: "Calib", lidar: "LiDAR", dt35: "DT35",
-  field_model: "场地模型", nine_gong_start: "9gong 起点", grid: "网格", axes: "坐标轴",
+  field_model: "场地模型", match_start: "比赛起点", grid: "网格", axes: "坐标轴",
 };
 
 const overlayStyle: CSSProperties = {
@@ -114,7 +116,11 @@ function drawCanvasArrow(ctx: CanvasRenderingContext2D, from: Point, to: Point, 
   ctx.fill();
 }
 
-function poseLocalPoint(world: Point, pose: NineGongStartPose | { x: number; y: number; yawDeg: number }): Point {
+function startPoseAsPose(start: LocatorStartPose): Pose {
+  return { x: start.fieldAnchorCm.x, y: start.fieldAnchorCm.y, yawDeg: start.fieldAnchorCm.yawDeg };
+}
+
+function poseLocalPoint(world: Point, pose: Pose): Point {
   const yaw = pose.yawDeg * Math.PI / 180;
   const dx = world.x - pose.x;
   const dy = world.y - pose.y;
@@ -124,22 +130,27 @@ function poseLocalPoint(world: Point, pose: NineGongStartPose | { x: number; y: 
   };
 }
 
-function nineGongTooltip(pose: NineGongStartPose): string {
+function matchStartTooltip(start: LocatorStartPose): string {
+  const pose = startPoseAsPose(start);
+  const distanceLine = start.sideBoundaryDistanceCm !== undefined && start.lowerBoundaryDistanceCm !== undefined
+    ? `距侧边界 ${start.sideBoundaryDistanceCm.toFixed(1)} cm · 在九宫下边界上方 ${start.lowerBoundaryDistanceCm.toFixed(1)} cm`
+    : "正式赛原有红蓝方起点锚点";
   return [
-    pose.label,
+    start.label,
     `中心 x=${pose.x.toFixed(1)} cm · y=${pose.y.toFixed(1)} cm`,
     `yaw=${pose.yawDeg.toFixed(1)}° · +Y 为车头前方`,
-    `距侧边界 ${pose.sideBoundaryDistanceCm.toFixed(1)} cm · 距九宫下边界 ${pose.lowerBoundaryDistanceCm.toFixed(1)} cm`,
-    "仅显示起始点，不参与定位/DT35/录制诊断",
+    distanceLine,
+    "当前赛制的定位相对坐标起点",
   ].join("\n");
 }
 
-function drawNineGongStartPoses(ctx: CanvasRenderingContext2D, view: MapViewport): void {
-  for (const pose of NINE_GONG_START_POSES) {
+function drawMatchStartPoses(ctx: CanvasRenderingContext2D, view: MapViewport, matchType: LocatorMatchType): void {
+  for (const start of Object.values(LOCATOR_START_POSES[matchType])) {
+    const pose = startPoseAsPose(start);
     const center = worldToCanvas(pose, view);
     const corners = [[-41.5, -41.5], [41.5, -41.5], [41.5, 41.5], [-41.5, 41.5]] as const;
-    const stroke = pose.side === "red" ? "#ff6b6b" : "#4dabf7";
-    const fill = pose.side === "red" ? "rgba(255,107,107,.14)" : "rgba(77,171,247,.14)";
+    const stroke = start.side === "red" ? "#ff6b6b" : "#4dabf7";
+    const fill = start.side === "red" ? "rgba(255,107,107,.14)" : "rgba(77,171,247,.14)";
     ctx.save();
     ctx.lineWidth = 2;
     ctx.strokeStyle = stroke;
@@ -170,9 +181,10 @@ function drawNineGongStartPoses(ctx: CanvasRenderingContext2D, view: MapViewport
     ctx.textBaseline = "bottom";
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(0,0,0,.75)";
-    ctx.strokeText(pose.side === "red" ? "红 9gong" : "蓝 9gong", center.x, center.y - 50);
+    const label = `${start.side === "red" ? "红" : "蓝"} ${start.matchType === "official" ? "正式" : "预选"}`;
+    ctx.strokeText(label, center.x, center.y - 50);
     ctx.fillStyle = stroke;
-    ctx.fillText(pose.side === "red" ? "红 9gong" : "蓝 9gong", center.x, center.y - 50);
+    ctx.fillText(label, center.x, center.y - 50);
     ctx.font = "11px ui-monospace, Consolas, monospace";
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
@@ -184,6 +196,23 @@ function drawNineGongStartPoses(ctx: CanvasRenderingContext2D, view: MapViewport
     ctx.fillText("+X", right.x + 4, right.y);
     ctx.restore();
   }
+}
+
+function localBoundsForField(context: LocatorCoordinateContext): { minX: number; maxX: number; minY: number; maxY: number } {
+  const corners = [
+    { x: FIELD_BOUNDS.minX, y: FIELD_BOUNDS.minY },
+    { x: FIELD_BOUNDS.minX, y: FIELD_BOUNDS.maxY },
+    { x: FIELD_BOUNDS.maxX, y: FIELD_BOUNDS.minY },
+    { x: FIELD_BOUNDS.maxX, y: FIELD_BOUNDS.maxY },
+  ].map((point) => fieldToLocal(point, context));
+  const xs = corners.map((point) => point.x);
+  const ys = corners.map((point) => point.y);
+  return {
+    minX: Math.min(...xs) - 80,
+    maxX: Math.max(...xs) + 80,
+    minY: Math.min(...ys) - 80,
+    maxY: Math.max(...ys) + 80,
+  };
 }
 
 function filteredTrail(
@@ -249,7 +278,7 @@ function featureAt(
   localFrame: LocatorFrame | null,
   trails: MapTrails,
   coordinateContext: LocatorCoordinateContext,
-  showNineGongStart: boolean,
+  showMatchStart: boolean,
 ): string | null {
   const thresholdCm = 10 / (fitScale(view) * view.zoom);
   for (const ray of rays) {
@@ -287,15 +316,16 @@ function featureAt(
       }
     }
   }
-  if (showNineGongStart) {
-    for (const pose of [...NINE_GONG_START_POSES].reverse()) {
+  if (showMatchStart) {
+    for (const start of [...Object.values(LOCATOR_START_POSES[coordinateContext.matchType])].reverse()) {
+      const pose = startPoseAsPose(start);
       const local = poseLocalPoint(world, pose);
       const nearAxis = Math.min(
         distanceToSegment(world, pose, bodyToWorld(pose, 45.65, 0)),
         distanceToSegment(world, pose, bodyToWorld(pose, 0, 62.25)),
       ) <= thresholdCm;
       if ((Math.abs(local.x) <= 41.5 && Math.abs(local.y) <= 41.5) || nearAxis) {
-        return nineGongTooltip(pose);
+        return matchStartTooltip(start);
       }
     }
   }
@@ -321,7 +351,7 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
   const [controlsOpen, setControlsOpen] = useState(true);
   const [layers, setLayers] = useState(() => layerDefaults(initialLayers));
   const [hover, setHover] = useState<{ x: number; y: number; world: Point; detail: string | null } | null>(null);
-  const previousSideRef = useRef(coordinateContext.side);
+  const previousContextKeyRef = useRef(`${coordinateContext.matchType}:${coordinateContext.side}`);
   const viewport = useMemo<MapViewport>(() => ({ ...size, ...camera, padding: 24 }), [size, camera]);
   const fieldFrame = useMemo(
     () => frame ? projectLocatorFrameToField(frame, coordinateContext) : null,
@@ -340,8 +370,9 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
 
   useEffect(() => {
     if (!follow || !fieldFrame) return;
-    if (previousSideRef.current !== coordinateContext.side) {
-      previousSideRef.current = coordinateContext.side;
+    const contextKey = `${coordinateContext.matchType}:${coordinateContext.side}`;
+    if (previousContextKeyRef.current !== contextKey) {
+      previousContextKeyRef.current = contextKey;
       setFollow(false);
       return;
     }
@@ -349,7 +380,7 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
       const next = followPoint({ ...size, ...current, padding: 24 }, { x: fieldFrame.posXcm, y: fieldFrame.posYcm });
       return { zoom: next.zoom, panX: next.panX, panY: next.panY };
     });
-  }, [follow, fieldFrame, size, coordinateContext.side]);
+  }, [follow, fieldFrame, size, coordinateContext.matchType, coordinateContext.side]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -372,23 +403,19 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
 
     if (layers.grid) {
       ctx.strokeStyle = "rgba(120,130,145,.34)"; ctx.lineWidth = 1;
-      const anchor = coordinateContext.fieldAnchorCm;
-      const minLocalX = FIELD_BOUNDS.minX - anchor.x;
-      const maxLocalX = FIELD_BOUNDS.maxX - anchor.x;
-      const minLocalY = FIELD_BOUNDS.minY - anchor.y;
-      const maxLocalY = FIELD_BOUNDS.maxY - anchor.y;
-      for (let x = Math.ceil(minLocalX / 50) * 50; x <= maxLocalX; x += 50) { const fieldX = anchor.x + x; const a = worldToCanvas({ x: fieldX, y: FIELD_BOUNDS.minY }, viewport); const b = worldToCanvas({ x: fieldX, y: FIELD_BOUNDS.maxY }, viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
-      for (let y = Math.ceil(minLocalY / 50) * 50; y <= maxLocalY; y += 50) { const fieldY = anchor.y + y; const a = worldToCanvas({ x: FIELD_BOUNDS.minX, y: fieldY }, viewport); const b = worldToCanvas({ x: FIELD_BOUNDS.maxX, y: fieldY }, viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      const bounds = localBoundsForField(coordinateContext);
+      for (let x = Math.ceil(bounds.minX / 50) * 50; x <= bounds.maxX; x += 50) { const a = worldToCanvas(localToField({ x, y: bounds.minY }, coordinateContext), viewport); const b = worldToCanvas(localToField({ x, y: bounds.maxY }, coordinateContext), viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      for (let y = Math.ceil(bounds.minY / 50) * 50; y <= bounds.maxY; y += 50) { const a = worldToCanvas(localToField({ x: bounds.minX, y }, coordinateContext), viewport); const b = worldToCanvas(localToField({ x: bounds.maxX, y }, coordinateContext), viewport); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
     }
     if (layers.axes) {
-      const anchor = coordinateContext.fieldAnchorCm;
-      const x0 = worldToCanvas({ x: FIELD_BOUNDS.minX, y: anchor.y }, viewport); const x1 = worldToCanvas({ x: FIELD_BOUNDS.maxX, y: anchor.y }, viewport);
-      const y0 = worldToCanvas({ x: anchor.x, y: FIELD_BOUNDS.minY }, viewport); const y1 = worldToCanvas({ x: anchor.x, y: FIELD_BOUNDS.maxY }, viewport);
+      const bounds = localBoundsForField(coordinateContext);
+      const x0 = worldToCanvas(localToField({ x: bounds.minX, y: 0 }, coordinateContext), viewport); const x1 = worldToCanvas(localToField({ x: bounds.maxX, y: 0 }, coordinateContext), viewport);
+      const y0 = worldToCanvas(localToField({ x: 0, y: bounds.minY }, coordinateContext), viewport); const y1 = worldToCanvas(localToField({ x: 0, y: bounds.maxY }, coordinateContext), viewport);
       ctx.lineWidth = 1.5; ctx.strokeStyle = "#ff6b6b"; ctx.beginPath(); ctx.moveTo(x0.x, x0.y); ctx.lineTo(x1.x, x1.y); ctx.stroke();
       ctx.strokeStyle = "#4dabf7"; ctx.beginPath(); ctx.moveTo(y0.x, y0.y); ctx.lineTo(y1.x, y1.y); ctx.stroke();
     }
     if (layers.field_model) drawFieldModel(ctx, viewport);
-    if (layers.nine_gong_start) drawNineGongStartPoses(ctx, viewport);
+    if (layers.match_start) drawMatchStartPoses(ctx, viewport, coordinateContext.matchType);
     if (layers.pos) drawPolyline(ctx, trails.final, viewport, "posXcm", "posYcm", "rgba(0,255,170,.82)", coordinateContext);
     if (layers.calib) drawPolyline(ctx, trails.calib, viewport, "calibXcm", "calibYcm", "rgba(255,192,0,.72)", coordinateContext);
     if (layers.lidar) drawPolyline(ctx, trails.lidar, viewport, "lidarXcm", "lidarYcm", "rgba(70,160,255,.76)", coordinateContext, true);
@@ -458,7 +485,7 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
     const fieldPoint = canvasToWorld(point, viewport);
     const localPoint = fieldToLocal(fieldPoint, coordinateContext);
     onMousePositionChange?.(localPoint);
-    setHover({ ...point, world: localPoint, detail: featureAt(fieldPoint, viewport, layers.dt35 ? raysRef.current : [], fieldFrame, frame, trails, coordinateContext, layers.nine_gong_start) });
+    setHover({ ...point, world: localPoint, detail: featureAt(fieldPoint, viewport, layers.dt35 ? raysRef.current : [], fieldFrame, frame, trails, coordinateContext, layers.match_start) });
   };
   const endPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
@@ -474,7 +501,7 @@ export function FieldMap({ frame, trails, coordinateContext, initialFollow = tru
 
   return <div className="field-map" style={{ position: "relative", width: "100%", height: "100%", minHeight: 430, overflow: "hidden", background: "#10151c" }}>
     <canvas
-      className="field-canvas" ref={canvasRef} aria-label="R1 定位场地图" data-side={coordinateContext.side}
+      className="field-canvas" ref={canvasRef} aria-label="R1 定位场地图" data-side={coordinateContext.side} data-match-type={coordinateContext.matchType}
       onWheel={onWheel} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
       onPointerUp={endPointer} onPointerCancel={endPointer} onPointerLeave={() => { if (!dragRef.current) setHover(null); }}
       style={{ cursor: dragRef.current ? "grabbing" : "grab", touchAction: "none" }}

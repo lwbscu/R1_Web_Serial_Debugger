@@ -1,4 +1,4 @@
-import { contextForSide, parseLocatorCoordinateMetadata, type LocatorCoordinateContext } from "../../core/locator";
+import { contextForSide, parseLocatorCoordinateMetadata, type LocatorCoordinateContext, type LocatorMatchType } from "../../core/locator";
 import type { ReplayRecord } from "../../core/replay";
 import { LocatorProtocolAdapter, type LocatorFrame } from "../../protocols";
 
@@ -17,7 +17,9 @@ export function replayCoordinateContext(metadata: unknown): LocatorCoordinateCon
     ? root.capture as Record<string, unknown>
     : null;
   const candidate = root.side ?? root.start_side ?? render?.side ?? capture?.side ?? capture?.start_side;
-  return candidate === "red" || candidate === "blue" ? contextForSide(candidate) : null;
+  const matchCandidate = root.matchType ?? root.match_type ?? render?.matchType ?? capture?.matchType ?? capture?.match_type;
+  const matchType: LocatorMatchType = matchCandidate === "preliminary" ? "preliminary" : "official";
+  return candidate === "red" || candidate === "blue" ? contextForSide(candidate, matchType) : null;
 }
 
 export function displayReplayFrame(record: ReplayRecord, adapter: LocatorProtocolAdapter): LocatorFrame | null {

@@ -1,6 +1,8 @@
 import type { LocatorFrame } from "../../protocols/models";
 
 export type LocatorSide = "red" | "blue";
+export type LocatorMatchType = "official" | "preliminary";
+export type LocatorTransformVersion = "r1-start-relative-v2";
 
 export interface LocatorPoint {
   x: number;
@@ -8,36 +10,71 @@ export interface LocatorPoint {
 }
 export interface LocatorCoordinateContext {
   side: LocatorSide;
+  matchType: LocatorMatchType;
   coordinateSpace: "start-relative";
-  transformVersion: "r1-start-relative-v1";
+  transformVersion: LocatorTransformVersion;
   fieldAnchorCm: {
     x: number;
     y: number;
-    yawDeg: 0;
+    yawDeg: number;
   };
 }
 
-const CONTEXTS: Readonly<Record<LocatorSide, LocatorCoordinateContext>> = {
-  red: {
-    side: "red",
-    coordinateSpace: "start-relative",
-    transformVersion: "r1-start-relative-v1",
-    fieldAnchorCm: { x: -555.7, y: 549, yawDeg: 0 },
+export interface LocatorStartPose {
+  side: LocatorSide;
+  matchType: LocatorMatchType;
+  label: string;
+  fieldAnchorCm: LocatorCoordinateContext["fieldAnchorCm"];
+  sideBoundaryDistanceCm?: number;
+  lowerBoundaryDistanceCm?: number;
+}
+
+export const LOCATOR_COORDINATE_TRANSFORM_VERSION: LocatorTransformVersion = "r1-start-relative-v2";
+
+export const LOCATOR_START_POSES: Readonly<Record<LocatorMatchType, Record<LocatorSide, LocatorStartPose>>> = {
+  official: {
+    red: {
+      side: "red",
+      matchType: "official",
+      label: "正式赛红方起点",
+      fieldAnchorCm: { x: -555.7, y: 549, yawDeg: 0 },
+    },
+    blue: {
+      side: "blue",
+      matchType: "official",
+      label: "正式赛蓝方起点",
+      fieldAnchorCm: { x: 548.5, y: 548, yawDeg: 0 },
+    },
   },
-  blue: {
-    side: "blue",
-    coordinateSpace: "start-relative",
-    transformVersion: "r1-start-relative-v1",
-    fieldAnchorCm: { x: 548.5, y: 548, yawDeg: 0 },
+  preliminary: {
+    red: {
+      side: "red",
+      matchType: "preliminary",
+      label: "预选赛红方 9gong 起点",
+      fieldAnchorCm: { x: -547.5, y: -300, yawDeg: 90 },
+      sideBoundaryDistanceCm: 60,
+      lowerBoundaryDistanceCm: 44.5,
+    },
+    blue: {
+      side: "blue",
+      matchType: "preliminary",
+      label: "预选赛蓝方 9gong 起点",
+      fieldAnchorCm: { x: 547.5, y: -300, yawDeg: 270 },
+      sideBoundaryDistanceCm: 60,
+      lowerBoundaryDistanceCm: 44.5,
+    },
   },
 };
 
 /** Returns a fresh context so callers cannot mutate the frozen side defaults. */
-export function contextForSide(side: LocatorSide): LocatorCoordinateContext {
-  const context = CONTEXTS[side];
+export function contextForSide(side: LocatorSide, matchType: LocatorMatchType = "official"): LocatorCoordinateContext {
+  const startPose = LOCATOR_START_POSES[matchType][side];
   return {
-    ...context,
-    fieldAnchorCm: { ...context.fieldAnchorCm },
+    side,
+    matchType,
+    coordinateSpace: "start-relative",
+    transformVersion: LOCATOR_COORDINATE_TRANSFORM_VERSION,
+    fieldAnchorCm: { ...startPose.fieldAnchorCm },
   };
 }
 
@@ -45,22 +82,34 @@ export function localToField<T extends LocatorPoint>(
   point: T,
   context: LocatorCoordinateContext,
 ): T {
-  return {
+  const yaw = context.fieldAnchorCm.yawDeg * Math.PI / 180;
+  const result = {
     ...point,
-    x: point.x + context.fieldAnchorCm.x,
-    y: point.y + context.fieldAnchorCm.y,
+    x: context.fieldAnchorCm.x + point.x * Math.cos(yaw) + point.y * Math.sin(yaw),
+    y: context.fieldAnchorCm.y - point.x * Math.sin(yaw) + point.y * Math.cos(yaw),
   };
+  if ("yawDeg" in point && typeof (point as { yawDeg?: unknown }).yawDeg === "number") {
+    (result as T & { yawDeg: number }).yawDeg = (point as { yawDeg: number }).yawDeg + context.fieldAnchorCm.yawDeg;
+  }
+  return result;
 }
 
 export function fieldToLocal<T extends LocatorPoint>(
   point: T,
   context: LocatorCoordinateContext,
 ): T {
-  return {
+  const yaw = context.fieldAnchorCm.yawDeg * Math.PI / 180;
+  const dx = point.x - context.fieldAnchorCm.x;
+  const dy = point.y - context.fieldAnchorCm.y;
+  const result = {
     ...point,
-    x: point.x - context.fieldAnchorCm.x,
-    y: point.y - context.fieldAnchorCm.y,
+    x: dx * Math.cos(yaw) - dy * Math.sin(yaw),
+    y: dx * Math.sin(yaw) + dy * Math.cos(yaw),
   };
+  if ("yawDeg" in point && typeof (point as { yawDeg?: unknown }).yawDeg === "number") {
+    (result as T & { yawDeg: number }).yawDeg = (point as { yawDeg: number }).yawDeg - context.fieldAnchorCm.yawDeg;
+  }
+  return result;
 }
 
 const XY_FIELDS = [
@@ -70,6 +119,13 @@ const XY_FIELDS = [
   ["h30Xcm", "h30Ycm"],
   ["lidarXcm", "lidarYcm"],
 ] as const satisfies readonly (readonly [keyof LocatorFrame, keyof LocatorFrame])[];
+
+const YAW_FIELDS = [
+  "posYawDeg",
+  "calibYawDeg",
+  "h30YawDeg",
+  "lidarYawDeg",
+] as const satisfies readonly (keyof LocatorFrame)[];
 
 function translateLocatorFrame(
   frame: LocatorFrame,
@@ -82,10 +138,16 @@ function translateLocatorFrame(
   };
 
   for (const [xField, yField] of XY_FIELDS) {
-    (translated[xField] as number) =
-      (frame[xField] as number) + direction * context.fieldAnchorCm.x;
-    (translated[yField] as number) =
-      (frame[yField] as number) + direction * context.fieldAnchorCm.y;
+    const point = direction === 1
+      ? localToField({ x: frame[xField] as number, y: frame[yField] as number }, context)
+      : fieldToLocal({ x: frame[xField] as number, y: frame[yField] as number }, context);
+    (translated[xField] as number) = point.x;
+    (translated[yField] as number) = point.y;
+  }
+
+  for (const yawField of YAW_FIELDS) {
+    (translated[yawField] as number) =
+      (frame[yawField] as number) + direction * context.fieldAnchorCm.yawDeg;
   }
 
   return translated;

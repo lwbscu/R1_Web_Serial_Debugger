@@ -236,11 +236,16 @@ test("keeps locator values and trail samples start-relative while switching red 
   await page.getByRole("button", { name: /定位地图/ }).click();
 
   const workspace = page.getByTestId("locator-workspace");
+  const official = workspace.getByRole("button", { name: "正式赛", exact: true });
+  const preliminary = workspace.getByRole("button", { name: "预选赛", exact: true });
   const red = workspace.getByRole("button", { name: "红方", exact: true });
   const blue = workspace.getByRole("button", { name: "蓝方", exact: true });
   const canvas = workspace.locator(".field-canvas");
+  await expect(official).toHaveAttribute("aria-pressed", "true");
+  await expect(preliminary).toHaveAttribute("aria-pressed", "false");
   await expect(red).toHaveAttribute("aria-pressed", "true");
   await expect(blue).toHaveAttribute("aria-pressed", "false");
+  await expect(canvas).toHaveAttribute("data-match-type", "official");
   await expect(canvas).toHaveAttribute("data-side", "red");
 
   const raw = [
@@ -269,6 +274,14 @@ test("keeps locator values and trail samples start-relative while switching red 
   });
   expect(redTrailSegments).toBe(2);
 
+  await preliminary.click();
+  await expect(official).toHaveAttribute("aria-pressed", "false");
+  await expect(preliminary).toHaveAttribute("aria-pressed", "true");
+  await expect(canvas).toHaveAttribute("data-match-type", "preliminary");
+  await expect(poseValues).toHaveText(redPose);
+  await official.click();
+  await expect(canvas).toHaveAttribute("data-match-type", "official");
+
   await blue.click();
   await expect(red).toHaveAttribute("aria-pressed", "false");
   await expect(blue).toHaveAttribute("aria-pressed", "true");
@@ -282,7 +295,9 @@ test("keeps locator values and trail samples start-relative while switching red 
 
   await page.reload();
   await page.getByRole("button", { name: /定位地图/ }).click();
+  await expect(page.getByTestId("locator-workspace").getByRole("button", { name: "正式赛", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("locator-workspace").getByRole("button", { name: "红方", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("locator-workspace").locator(".field-canvas")).toHaveAttribute("data-match-type", "official");
   await expect(page.getByTestId("locator-workspace").locator(".field-canvas")).toHaveAttribute("data-side", "red");
 });
 
@@ -299,9 +314,11 @@ test("starts locator demo near local zero and locks the side selector while reco
   await expect(poseValues.nth(1)).toHaveText("0.00");
 
   await workspace.getByRole("button", { name: "开始本地录制", exact: true }).click();
+  await expect(workspace.getByRole("button", { name: "正式赛", exact: true })).toBeDisabled();
+  await expect(workspace.getByRole("button", { name: "预选赛", exact: true })).toBeDisabled();
   await expect(workspace.getByRole("button", { name: "红方", exact: true })).toBeDisabled();
   await expect(workspace.getByRole("button", { name: "蓝方", exact: true })).toBeDisabled();
-  await expect(workspace.getByText("录制中已锁定阵营", { exact: true })).toBeVisible();
+  await expect(workspace.getByText("录制中已锁定比赛类型和阵营", { exact: true })).toBeVisible();
 });
 
 test("locator layout has no page-level horizontal overflow at supported breakpoints", async ({ page }) => {

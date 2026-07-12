@@ -5,6 +5,7 @@ import {
   contextForSide,
   restoreLocatorFrameFromField,
   type LocatorCoordinateContext,
+  type LocatorMatchType,
   type LocatorSide,
 } from "../../core/locator";
 import { encodeCsvRow } from "../../core/storage";
@@ -26,6 +27,7 @@ import { displayReplayFrame, replayCoordinateContext } from "./replayDisplay";
 
 const EMPTY_TRAILS: MapTrails = { final: [], calib: [], lidar: [] };
 const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5] as const;
+const MATCH_LABELS: Record<LocatorMatchType, string> = { official: "正式赛", preliminary: "预选赛" };
 
 function appendPoint(items: LocatorFrame[], frame: LocatorFrame, x: keyof LocatorFrame, y: keyof LocatorFrame, valid = true): LocatorFrame[] {
   if (!valid) return items;
@@ -42,8 +44,9 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   const adapter = useMemo(() => new LocatorProtocolAdapter(), []);
   const recorder = useRecorder("locator");
   const [recordingStarting, setRecordingStarting] = useState(false);
+  const [matchType, setMatchType] = useState<LocatorMatchType>("official");
   const [side, setSide] = useState<LocatorSide>("red");
-  const coordinateContext = useMemo(() => contextForSide(side), [side]);
+  const coordinateContext = useMemo(() => contextForSide(side, matchType), [matchType, side]);
   const [frame, setFrame] = useState<LocatorFrame | null>(null);
   const [trails, setTrails] = useState<MapTrails>(EMPTY_TRAILS);
   const [logs, setLogs] = useState<string[]>([]);
@@ -159,7 +162,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
       replayCoordinateSpaceRef.current = selectedTrack.coordinateSpace;
       replayContextRef.current = recordedContext;
       replayTrackNameRef.current = selectedTrack.name;
-      if (recordedContext) setSide(recordedContext.side);
+      if (recordedContext) { setMatchType(recordedContext.matchType); setSide(recordedContext.side); }
       if (selectedTrack.coordinateSpace === "field" && !recordedContext) throw new Error("旧 display_frames.csv 已烘焙场地坐标，但缺少阵营元数据，无法安全反算相对坐标。");
       const records = selectedTrack.records;
       const clock = new ReplayClock(records, { onRecord: consumeReplay, onStateChange: setReplay });
@@ -188,7 +191,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
     canvas?.toBlob((blob) => {
       if (!blob) return;
       const url = URL.createObjectURL(blob); const anchor = document.createElement("a");
-      anchor.href = url; anchor.download = `r1-map-${side}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.png`; anchor.click();
+      anchor.href = url; anchor.download = `r1-map-${matchType}-${side}-${new Date().toISOString().replaceAll(/[:.]/g, "-")}.png`; anchor.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     }, "image/png");
   };
@@ -196,9 +199,9 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   const resetViewData = () => { setTrails(EMPTY_TRAILS); setFrame(null); };
   const serialBusy = port.snapshot.lifecycle === "reading";
   const recordingButtonLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始本地录制";
-  const sideLocked = recordingStarting || recorder.active || recorder.exporting;
+  const startSelectionLocked = recordingStarting || recorder.active || recorder.exporting;
   const startRecording = async () => {
-    if (sideLocked) return;
+    if (startSelectionLocked) return;
     setRecordingStarting(true);
     try { await recorder.start({ locatorCoordinates: coordinateContext }); }
     finally { setRecordingStarting(false); }
@@ -225,7 +228,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
       <aside className="locator-side locator-replay-panel">
         <section className="studio-card">
           <header><span>REPLAY</span><strong>日志回放</strong><InfoTip label="定位日志回放说明">支持 raw log、CSV 和本站导出的 ZIP 会话包。播放按日志时间推进，单步只前进一帧，0.25× 至 5× 调整回放时间倍率。实时串口连接期间禁用回放，拖动进度会立即重建当前位置。</InfoTip></header>
-          <label className={`file-drop${serialBusy || sideLocked ? " disabled" : ""}`}>选择 raw log / CSV / ZIP<input type="file" accept=".log,.txt,.csv,.zip" disabled={serialBusy || sideLocked} onChange={(event) => { const file = event.target.files?.[0]; if (file) void openReplay(file); }} /></label>
+          <label className={`file-drop${serialBusy || startSelectionLocked ? " disabled" : ""}`}>选择 raw log / CSV / ZIP<input type="file" accept=".log,.txt,.csv,.zip" disabled={serialBusy || startSelectionLocked} onChange={(event) => { const file = event.target.files?.[0]; if (file) void openReplay(file); }} /></label>
           <p className="file-name" title={replayName}>{replayName || "尚未加载文件"}</p>
           <div className="replay-primary"><button onClick={playReplay} disabled={replay.length === 0 || serialBusy}>播放</button><button className="secondary" onClick={() => clockRef.current?.pause()} disabled={replay.state !== "playing"}>暂停</button><button className="secondary" onClick={() => { stopDemo(); clockRef.current?.step(); }} disabled={replay.length === 0 || serialBusy}>单步</button></div>
           <input className="replay-slider" aria-label="回放进度" type="range" min={0} max={Math.max(0, replay.length - 1)} value={Math.min(replay.index, Math.max(0, replay.length - 1))} disabled={replay.length === 0 || serialBusy} onChange={(event) => seek(Number(event.target.value))} />
@@ -238,20 +241,24 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
           <header><span>DISPLAY</span><strong>视图与数据</strong><InfoTip label="定位视图操作说明">清除三轨迹会清空 Final、Calib、LiDAR 的页面轨迹和当前帧，不删除录制文件。状态 JSON 导出相对定位值，并将场地锚点单独保存到 renderContext；地图画布按钮另行导出当前可见图像。</InfoTip></header>
           <button className="secondary wide" onClick={resetViewData}>清除三轨迹</button>
           <button className="secondary wide" onClick={exportSnapshot}>导出当前状态 JSON</button>
-          <p className="studio-hint">地图右上角控制七类图层与跟随。滚轮以鼠标为中心缩放，拖拽平移；跟随开启时每帧自动回中。</p>
+          <p className="studio-hint">地图右上角控制八类图层与跟随。滚轮以鼠标为中心缩放，拖拽平移；跟随开启时每帧自动回中。</p>
         </section>
       </aside>
 
       <section className="map-stage">
         <div className="map-side-toolbar">
-          <div className="side-selector" role="group" aria-label="定位阵营">
-            <button type="button" className={side === "red" ? "side-red selected" : "side-red"} aria-pressed={side === "red"} disabled={sideLocked} onClick={() => { setSide("red"); setMouse(null); }}>红方</button>
-            <button type="button" className={side === "blue" ? "side-blue selected" : "side-blue"} aria-pressed={side === "blue"} disabled={sideLocked} onClick={() => { setSide("blue"); setMouse(null); }}>蓝方</button>
+          <div className="side-selector match-selector" role="group" aria-label="比赛类型">
+            <button type="button" className={matchType === "official" ? "selected" : ""} aria-pressed={matchType === "official"} disabled={startSelectionLocked} onClick={() => { setMatchType("official"); setMouse(null); }}>正式赛</button>
+            <button type="button" className={matchType === "preliminary" ? "selected" : ""} aria-pressed={matchType === "preliminary"} disabled={startSelectionLocked} onClick={() => { setMatchType("preliminary"); setMouse(null); }}>预选赛</button>
           </div>
-          <span>{sideLocked ? "录制中已锁定阵营" : "双方起点均显示相对 (0,0,0)；切换只改变场地图放置锚点"}</span>
-          <InfoTip label="红蓝方相对坐标说明">串口、日志、回放、轨迹、姿态卡和示波器始终使用机器人初始化位置为零点的相对坐标。红蓝按钮只改变机器人与轨迹在固定场地背景上的内部放置锚点，不旋转、不镜像，也不会清空已有轨迹。</InfoTip>
+          <div className="side-selector" role="group" aria-label="定位阵营">
+            <button type="button" className={side === "red" ? "side-red selected" : "side-red"} aria-pressed={side === "red"} disabled={startSelectionLocked} onClick={() => { setSide("red"); setMouse(null); }}>红方</button>
+            <button type="button" className={side === "blue" ? "side-blue selected" : "side-blue"} aria-pressed={side === "blue"} disabled={startSelectionLocked} onClick={() => { setSide("blue"); setMouse(null); }}>蓝方</button>
+          </div>
+          <span>{startSelectionLocked ? "录制中已锁定比赛类型和阵营" : `${MATCH_LABELS[matchType]} · ${side === "red" ? "红方" : "蓝方"}起点显示相对 (0,0,0)`}</span>
+          <InfoTip label="比赛类型与红蓝方相对坐标说明">正式赛使用原有红/蓝起点；预选赛使用 9gong 起点，并按车头方向旋转相对坐标轴。串口、日志、姿态卡和示波器仍显示机器人初始化位置为零点的相对坐标；录制开始后会锁定比赛类型和阵营并写入会话 metadata。</InfoTip>
         </div>
-        <div className="map-stage-head"><div className="map-series-legend"><span className="final">Final</span><span className="calib">Calib</span><span className="lidar">LiDAR</span><span className="dt-state">DT35 状态色</span><span className="dt-expected">DT35 期望</span><InfoTip label="地图图例与坐标说明">Final、Calib、LiDAR 均显示机器人初始点相对轨迹，单位 cm，+Y 方向在红蓝方保持一致；YAW 不旋转、不镜像。场地背景固定，DT35 几何计算仅在 Canvas 内部使用阵营锚点。</InfoTip></div><span>{mouse ? `相对 X ${mouse.x.toFixed(1)} · Y ${mouse.y.toFixed(1)} cm` : "移动鼠标读取起点相对坐标"}</span></div>
+        <div className="map-stage-head"><div className="map-series-legend"><span className="final">Final</span><span className="calib">Calib</span><span className="lidar">LiDAR</span><span className="dt-state">DT35 状态色</span><span className="dt-expected">DT35 期望</span><InfoTip label="地图图例与坐标说明">Final、Calib、LiDAR 均显示机器人初始点相对轨迹，单位 cm，+Y 为车头前方。正式赛沿用原有红蓝锚点；预选赛使用 9gong 起点，地图内部按起点 yaw 旋转轨迹、机器人和 DT35 几何。</InfoTip></div><span>{mouse ? `相对 X ${mouse.x.toFixed(1)} · Y ${mouse.y.toFixed(1)} cm` : "移动鼠标读取起点相对坐标"}</span></div>
         <FieldMap frame={frame} trails={trails} coordinateContext={coordinateContext} onMousePositionChange={setMouse} />
       </section>
 

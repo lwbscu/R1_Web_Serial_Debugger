@@ -8,6 +8,7 @@ import {
   parseReplayText,
   type ReplayTimerDriver,
 } from "../../src/core/replay";
+import { contextForSide } from "../../src/core/locator";
 import { ChassisProtocolAdapter } from "../../src/protocols";
 
 describe("parseReplayText", () => {
@@ -126,6 +127,16 @@ describe("loadReplayZip", () => {
   });
 
   it("uses new web metadata for relative display frames", () => {
+    const archive = zipSync({
+      "display_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
+      "metadata.json": new TextEncoder().encode(JSON.stringify({
+        locatorCoordinates: contextForSide("blue", "preliminary"),
+      })),
+    });
+    expect(loadReplayZip(archive).tracks[0]?.coordinateSpace).toBe("start-relative");
+  });
+
+  it("keeps legacy official metadata readable for relative display frames", () => {
     const archive = zipSync({
       "display_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
       "metadata.json": new TextEncoder().encode(JSON.stringify({

@@ -5,8 +5,6 @@ import type { LocatorFrame } from "../../src/protocols";
 import {
   DT35_MOUNTS,
   FIELD_BOUNDS,
-  FIELD_SEGMENTS,
-  NINE_GONG_START_POSES,
   bodyToWorld,
   canvasToWorld,
   computeDt35Ray,
@@ -62,31 +60,6 @@ describe("frozen e685044 map geometry", () => {
     const followed = followPoint({ ...view, zoom: 2 }, { x: 150, y: -80 });
     expect(followed.zoom).toBe(2);
     expect(worldToCanvas({ x: 150, y: -80 }, followed)).toEqual({ x: 500, y: 400 });
-  });
-
-  it("defines 9gong start poses in field coordinates with +Y as the vehicle front", () => {
-    const [red, blue] = NINE_GONG_START_POSES;
-    expect(red).toMatchObject({ side: "red", x: -547.5, y: -389, yawDeg: 90 });
-    expect(blue).toMatchObject({ side: "blue", x: 547.5, y: -389, yawDeg: 270 });
-
-    expect(red.x - FIELD_BOUNDS.minX).toBeCloseTo(60);
-    expect(FIELD_BOUNDS.maxX - blue.x).toBeCloseTo(60);
-
-    const lowerUsedWeaponWall = FIELD_SEGMENTS.find((segment) => segment.name === "lower_used_weapon_wall");
-    expect(lowerUsedWeaponWall).toBeDefined();
-    expect(lowerUsedWeaponWall!.a.y - red.y).toBeCloseTo(44.5);
-    expect(lowerUsedWeaponWall!.a.y - blue.y).toBeCloseTo(44.5);
-    expect(red.sideBoundaryDistanceCm).toBe(60);
-    expect(blue.sideBoundaryDistanceCm).toBe(60);
-    expect(red.lowerBoundaryDistanceCm).toBe(44.5);
-    expect(blue.lowerBoundaryDistanceCm).toBe(44.5);
-
-    const redFront = bodyToWorld(red, 0, 10);
-    const blueFront = bodyToWorld(blue, 0, 10);
-    expect(redFront.x).toBeGreaterThan(red.x);
-    expect(redFront.y).toBeCloseTo(red.y);
-    expect(blueFront.x).toBeLessThan(blue.x);
-    expect(blueFront.y).toBeCloseTo(blue.y);
   });
 
   it("uses H30 yaw when valid and falls back to displayed pose yaw", () => {

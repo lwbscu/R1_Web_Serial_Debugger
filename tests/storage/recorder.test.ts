@@ -10,6 +10,7 @@ import {
   exportSessionVolumes,
   listRecoverableSessions,
 } from "../../src/core/storage";
+import { contextForSide } from "../../src/core/locator";
 
 const decoder = new TextDecoder();
 
@@ -58,12 +59,7 @@ describe("SessionRecorder", () => {
     const store = new MemoryFileStore();
     await expect(SessionRecorder.create(store, {
       ...manifest(),
-      locatorCoordinates: {
-        side: "red",
-        coordinateSpace: "start-relative",
-        transformVersion: "r1-start-relative-v1",
-        fieldAnchorCm: { x: -555.7, y: 549, yawDeg: 0 },
-      },
+      locatorCoordinates: contextForSide("red", "official"),
     })).rejects.toThrow(/locator session/);
   });
 
@@ -176,12 +172,7 @@ describe("session export", () => {
     const store = new MemoryFileStore();
     const locatorManifest = {
       ...manifest("locator"),
-      locatorCoordinates: {
-        side: "red" as const,
-        coordinateSpace: "start-relative" as const,
-        transformVersion: "r1-start-relative-v1" as const,
-        fieldAnchorCm: { x: -555.7, y: 549, yawDeg: 0 as const },
-      },
+      locatorCoordinates: contextForSide("red", "preliminary"),
     };
     const recorder = await SessionRecorder.create(store, locatorManifest);
     await recorder.append("display_frames.csv", "x,y,yaw\n0,0,0\n", 1);
