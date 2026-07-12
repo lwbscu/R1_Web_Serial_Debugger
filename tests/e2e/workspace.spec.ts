@@ -396,7 +396,7 @@ test("starts locator demo near local zero and locks the side selector while reco
   await page.getByRole("button", { name: /定位地图/ }).click();
   const workspace = page.getByTestId("locator-workspace");
   await page.clock.install({ time: new Date("2030-07-12T12:00:00Z") });
-  await page.clock.pauseAt(new Date("2030-07-12T12:00:00Z"));
+  await page.clock.pauseAt(new Date("2030-07-12T12:00:01Z"));
   await workspace.getByRole("button", { name: "演示轨迹", exact: true }).click();
   const poseValues = workspace.locator(".pose-primary strong");
   await expect(poseValues.nth(0)).toHaveText("0.00");
