@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReceivedLine } from "../../core/serial";
 import { encodeCsvRow } from "../../core/storage";
 import { publishFrame, telemetryHub } from "../../core/telemetry";
-import { ChassisProtocolAdapter, RemoteProtocolAdapter, type ChassisFrame, type RemoteFrame } from "../../protocols";
+import { ChassisProtocolAdapter, parseRdbgTx, RemoteProtocolAdapter, type ChassisFrame, type RemoteFrame, type RemoteTxEvent } from "../../protocols";
 import { downloadText } from "../../shared/download";
 import { RecordIcon } from "../../shared/components/Icons";
 import { InfoTip } from "../../shared/components/InfoTip";
 import { SerialConnectionBar } from "../../shared/components/SerialConnectionBar";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
-import { demoChassisFrame, demoRemoteFrame } from "../demo/demoData";
+import { demoChassisFrame, demoRemoteFrame, demoRemoteTxEvent } from "../demo/demoData";
 import { RecordingDownloadProgress } from "../recording/RecordingDownloadProgress";
 import { useRecorder } from "../recording/useRecorder";
 import { usePortSession } from "../serial/usePortSession";
@@ -21,6 +21,7 @@ import {
   type MetricContext, type MetricSpec,
 } from "./metrics";
 import { generateHtmlDiagnosticReport, generateMarkdownDiagnosticReport, type DiagnosticReportMetric } from "./reports";
+import { remoteDebugStore } from "../remoteControl/remoteDebugStore";
 
 interface LogEntry { at: number; role: "remote" | "chassis"; line: string; result: string }
 interface StructuredRow { at: number; role: "remote" | "chassis"; seq: number | string; summary: string }
@@ -67,6 +68,7 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     const at = Date.now();
     const value: RemoteFrame = { ...input, observedAtMs: at };
     setRemote(value);
+    remoteDebugStore.publishRemote(value);
     publishFrame("remote", value, origin, at);
     appendEvents(detector.current.acceptRemote(value));
     if (origin === "demo") {
@@ -78,10 +80,20 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     if (origin !== "demo") void recorder.append("remote_rdbg.csv", encodeCsvRow([at, value.rawLine]));
   }, [appendEvents, recorder]);
 
+  const acceptRemoteTx = useCallback((input: RemoteTxEvent, origin: "serial" | "demo" = "serial") => {
+    const at = Date.now();
+    const value: RemoteTxEvent = { ...input, observedAtMs: at };
+    remoteDebugStore.publishTx(value);
+    const row: StructuredRow = { at, role: "remote", seq: value.seq, summary: `RDBG_TX ${value.packetType} · ${value.txLen}B · ret ${value.txRet} · ACK ${value.ackLen}B` };
+    setFrames((old) => [...old, row].slice(-2000));
+    if (origin !== "demo") void recorder.append("remote_rdbg_tx.csv", encodeCsvRow([at, value.rawLine]));
+  }, [recorder]);
+
   const acceptChassis = useCallback((input: ChassisFrame, origin: "serial" | "demo" = "serial") => {
     const at = Date.now();
     const value: ChassisFrame = { ...input, observedAtMs: at };
     setChassis(value);
+    remoteDebugStore.publishChassis(value);
     publishFrame("chassis", value, origin, at);
     appendEvents(detector.current.acceptChassis(value));
     if (origin === "demo") {
@@ -96,6 +108,7 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   const handle = (role: "remote" | "chassis") => (received: ReceivedLine<RemoteFrame | ChassisFrame>) => {
     const at = Date.now();
     setLogs((old) => [...old, { at, role, line: received.line, result: received.outcome.kind }].slice(-2000));
+    remoteDebugStore.publishLog({ at, role, line: received.line, result: received.outcome.kind });
     void recorder.append(role === "remote" ? "remote_raw.log" : "chassis_raw.log", `${at},${received.line}\n`);
     if (received.outcome.kind === "frame") {
       if (role === "remote") acceptRemote(received.outcome.frame as RemoteFrame);
@@ -104,12 +117,27 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     }
     if (received.outcome.kind === "event") {
       const firmwareKind = received.outcome.event.eventKind;
+      if (role === "remote" && firmwareKind === "RDBG_TX") {
+        const parsed = parseRdbgTx(received.outcome.event.rawLine, at);
+        if (parsed.kind === "frame") acceptRemoteTx(parsed.frame);
+        else if (parsed.kind === "error") {
+          const event: DiagnosticEvent = { observedAtMs: at, kind: "PARSE_ERROR", severity: "warn", detail: `remote: ${parsed.code} — ${parsed.detail}` };
+          remoteDebugStore.publishParseError(event);
+          appendEvents([event]);
+        }
+        return;
+      }
       const displayKind = received.outcome.event.rawLine.startsWith("CEVT,") ? `CEVT_${firmwareKind}` : firmwareKind;
       const event: DiagnosticEvent = { observedAtMs: at, kind: displayKind, severity: firmwareEventSeverity(firmwareKind), detail: received.outcome.event.fields.map(String).join(", ") || received.outcome.event.rawLine };
+      remoteDebugStore.publishFirmwareEvent(event);
       appendEvents([event]);
       return;
     }
-    if (received.outcome.kind === "error") appendEvents([{ observedAtMs: at, kind: "PARSE_ERROR", severity: "warn", detail: `${role}: ${received.outcome.code} — ${received.outcome.detail}` }]);
+    if (received.outcome.kind === "error") {
+      const event: DiagnosticEvent = { observedAtMs: at, kind: "PARSE_ERROR", severity: "warn", detail: `${role}: ${received.outcome.code} — ${received.outcome.detail}` };
+      remoteDebugStore.publishParseError(event);
+      appendEvents([event]);
+    }
   };
 
   const stopDemo = useCallback(() => {
@@ -117,45 +145,78 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     setDemoActive(false);
     detector.current.reset();
     setRemote(null); setChassis(null);
+    remoteDebugStore.clear();
     telemetryHub.releaseSource("remote", "demo");
     telemetryHub.releaseSource("chassis", "demo");
   }, [demoActive]);
 
-  const remotePort = usePortSession<RemoteFrame>("remote", remoteAdapter, handle("remote"), () => {
-    stopDemo();
+  const resetRemote = useCallback(() => {
     detector.current.resetSource("remote");
     setRemote(null);
+    remoteDebugStore.clearRemote();
     telemetryHub.releaseSource("remote", "serial");
+  }, []);
+
+  const resetChassis = useCallback(() => {
+    detector.current.resetSource("chassis");
+    setChassis(null);
+    remoteDebugStore.clearChassis();
+    telemetryHub.releaseSource("chassis", "serial");
+  }, []);
+
+  const remotePort = usePortSession<RemoteFrame>("remote", remoteAdapter, handle("remote"), () => {
+    stopDemo();
+    resetRemote();
   });
   const chassisPort = usePortSession<ChassisFrame>("chassis", chassisAdapter, handle("chassis"), () => {
     stopDemo();
-    detector.current.resetSource("chassis");
-    setChassis(null);
-    telemetryHub.releaseSource("chassis", "serial");
+    resetChassis();
   });
   const remoteWasReading = useRef(false);
   const chassisWasReading = useRef(false);
 
   useEffect(() => {
+    remoteDebugStore.publishPort("remote", remotePort.supported, remotePort.snapshot);
+  }, [remotePort.snapshot, remotePort.supported]);
+
+  useEffect(() => {
+    remoteDebugStore.publishPort("chassis", chassisPort.supported, chassisPort.snapshot);
+  }, [chassisPort.snapshot, chassisPort.supported]);
+
+  useEffect(() => remoteDebugStore.registerPortActions("remote", {
+    select: async () => { stopDemo(); resetRemote(); await remotePort.select(); },
+    connect: async () => { stopDemo(); await remotePort.connect(); },
+    close: async () => { resetRemote(); await remotePort.close(); },
+  }), [remotePort.select, remotePort.connect, remotePort.close, resetRemote, stopDemo]);
+
+  useEffect(() => remoteDebugStore.registerPortActions("chassis", {
+    select: async () => { stopDemo(); resetChassis(); await chassisPort.select(); },
+    connect: async () => { stopDemo(); await chassisPort.connect(); },
+    close: async () => { resetChassis(); await chassisPort.close(); },
+  }), [chassisPort.select, chassisPort.connect, chassisPort.close, resetChassis, stopDemo]);
+
+  useEffect(() => {
     if (remoteWasReading.current && remotePort.snapshot.lifecycle !== "reading") {
       detector.current.resetSource("remote"); setRemote(null); telemetryHub.releaseSource("remote", "serial");
+      remoteDebugStore.clearRemote();
     }
     remoteWasReading.current = remotePort.snapshot.lifecycle === "reading";
   }, [remotePort.snapshot.lifecycle]);
   useEffect(() => {
     if (chassisWasReading.current && chassisPort.snapshot.lifecycle !== "reading") {
       detector.current.resetSource("chassis"); setChassis(null); telemetryHub.releaseSource("chassis", "serial");
+      remoteDebugStore.clearChassis();
     }
     chassisWasReading.current = chassisPort.snapshot.lifecycle === "reading";
   }, [chassisPort.snapshot.lifecycle]);
 
   useEffect(() => {
     if (!demoActive) return;
-    const tick = () => { const at = Date.now(); acceptRemote(demoRemoteFrame(at), "demo"); acceptChassis(demoChassisFrame(at), "demo"); };
+    const tick = () => { const at = Date.now(); acceptRemote(demoRemoteFrame(at), "demo"); acceptRemoteTx(demoRemoteTxEvent(at), "demo"); acceptChassis(demoChassisFrame(at), "demo"); };
     tick();
     const timer = window.setInterval(tick, 100);
     return () => window.clearInterval(timer);
-  }, [acceptChassis, acceptRemote, demoActive]);
+  }, [acceptChassis, acceptRemote, acceptRemoteTx, demoActive]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setClockNow(Date.now()), 500);
@@ -183,8 +244,6 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     if (format === "md") downloadText(name, generateMarkdownDiagnosticReport(input), "text/markdown;charset=utf-8");
     else downloadText(name, generateHtmlDiagnosticReport(input), "text/html;charset=utf-8");
   };
-  const resetRemote = () => { detector.current.resetSource("remote"); setRemote(null); telemetryHub.releaseSource("remote", "serial"); };
-  const resetChassis = () => { detector.current.resetSource("chassis"); setChassis(null); telemetryHub.releaseSource("chassis", "serial"); };
   const serialBusy = remotePort.snapshot.lifecycle === "reading" || chassisPort.snapshot.lifecycle === "reading";
   const recordingButtonLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始本地录制";
   const shownLogs = streamPaused ? frozenConsole.current?.logs ?? logs : logs;

@@ -9,6 +9,7 @@ const REPLAY_ARTIFACTS = new Set([
   "remote_raw.log",
   "chassis_raw.log",
   "remote_rdbg.csv",
+  "remote_rdbg_tx.csv",
   "chassis_cdbg.csv",
   "raw_serial.log",
   "raw_frames.csv",

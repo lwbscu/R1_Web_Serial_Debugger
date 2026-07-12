@@ -1,4 +1,4 @@
-import type { ChassisFrame, LocatorFrame, RemoteFrame } from "../../protocols";
+import type { ChassisFrame, LocatorFrame, RemoteFrame, RemoteTxEvent } from "../../protocols";
 
 function wave(t: number, period: number, amplitude = 1, offset = 0): number {
   return offset + Math.sin(t / period) * amplitude;
@@ -27,6 +27,49 @@ export function demoRemoteFrame(atMs = Date.now()): RemoteFrame {
     rxScore: Math.round(wave(t, 3.2, 6, weak ? 68 : 92)),
     localPresent: 1,
     xReason: "none",
+  };
+}
+
+export function demoRemoteTxEvent(atMs = Date.now()): RemoteTxEvent {
+  const t = atMs / 1000;
+  const phase = Math.floor(t) % 6;
+  const adc = [
+    Math.round(wave(t, 1.4, 600, 2048)),
+    Math.round(wave(t, 1.9, 520, 2048)),
+    Math.round(wave(t, 2.4, 420, 2048)),
+    Math.round(wave(t, 2.8, 380, 2048)),
+  ];
+  const type = phase === 0 ? "MODE" : phase === 1 ? "KEY" : phase === 2 ? "ACT" : "ADC";
+  const txBytes = type === "ACT"
+    ? [0x5B, 0x02, 0x01, 0x01, 0x01]
+    : type === "KEY"
+      ? [0x4B, 0x07, 0, 0, 0, 0, 0xA5, 0x5A, 0x33]
+      : type === "MODE"
+        ? [0x50, 0x01, 0x64, 0, 0x9C, 0xFF, 0, 0xA5, 0x5A]
+        : [0x02, adc[0]! & 0xff, adc[0]! >> 8, adc[1]! & 0xff, adc[1]! >> 8, adc[2]! & 0xff, adc[2]! >> 8, adc[3]! & 0xff, adc[3]! >> 8];
+  const ackBytes = type === "ACT" ? [0x87, 0x5C, 0x02, 0x01, 0x01, 0x01] : [0x92];
+  const args: [number, number, number, number] = type === "ACT" ? [2, 1, 1, 1]
+    : type === "KEY" ? [7, 0, 0, 0]
+      : type === "MODE" ? [1, 100, -100, 0]
+        : [adc[0]!, adc[1]!, adc[2]!, adc[3]!];
+  const hex = (items: readonly number[]) => items.map((item) => (item & 0xff).toString(16).toUpperCase().padStart(2, "0")).join("");
+  return {
+    observedAtMs: atMs,
+    rawLine: "RDBG_TX,1,DEMO",
+    protocolVersion: 1,
+    ms: Math.floor(atMs % 0xFFFFFFFF),
+    seq: Math.floor(t * 10) % 65536,
+    packetType: type,
+    txLen: txBytes.length,
+    txHex: hex(txBytes),
+    txBytes,
+    txRet: 1,
+    ackLen: ackBytes.length,
+    ackHex: hex(ackBytes),
+    ackBytes,
+    lost: 0,
+    retry: phase === 4 ? 2 : 0,
+    args,
   };
 }
 

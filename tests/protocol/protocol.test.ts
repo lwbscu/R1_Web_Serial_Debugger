@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ChassisProtocolAdapter, parseCdbg, V3_EXTENSION_FIELDS } from "../../src/protocols/cdbg";
 import { crc16CcittFalse } from "../../src/protocols/crc16";
 import { parseLocator } from "../../src/protocols/locator";
-import { parseRdbg } from "../../src/protocols/rdbg";
+import { parseRdbg, parseRdbgTx, RDBG_TX_FIELD_COUNT, RemoteProtocolAdapter } from "../../src/protocols/rdbg";
 
 describe("protocol compatibility", () => {
   it("parses RDBG and reports trailing fields", () => {
@@ -13,6 +13,34 @@ describe("protocol compatibility", () => {
     if (outcome.kind !== "frame") return;
     expect(outcome.frame).toMatchObject({ seq: 7, rfCh: 76, signalBars: 4, xReason: "none" });
     expect(outcome.warnings).toEqual(["trailing_fields"]);
+  });
+
+  it("parses RDBG_TX v1 payload and ACK bytes", () => {
+    expect(RDBG_TX_FIELD_COUNT).toBe(16);
+    const outcome = parseRdbgTx("RDBG_TX,1,100,8,ACT,5,5B02010101,1,6,875C02010101,0,1,2,1,1,1", 1234);
+    expect(outcome.kind).toBe("frame");
+    if (outcome.kind !== "frame") return;
+    expect(outcome.frame).toMatchObject({
+      packetType: "ACT",
+      txLen: 5,
+      txBytes: [0x5B, 0x02, 0x01, 0x01, 0x01],
+      ackLen: 6,
+      ackBytes: [0x87, 0x5C, 0x02, 0x01, 0x01, 0x01],
+      args: [2, 1, 1, 1],
+    });
+  });
+
+  it("rejects malformed RDBG_TX frames", () => {
+    expect(parseRdbgTx("RDBG_TX,1,100,8,ACT,5,5B02010101,1,0,-,0,1,2,1,1", 1234)).toMatchObject({ kind: "error", code: "incomplete_frame" });
+    expect(parseRdbgTx("RDBG_TX,2,100,8,ACT,5,5B02010101,1,0,-,0,1,2,1,1,1", 1234)).toMatchObject({ kind: "error", code: "unsupported_version" });
+    expect(parseRdbgTx("RDBG_TX,1,100,8,ACT,5,5B020101ZZ,1,0,-,0,1,2,1,1,1", 1234)).toMatchObject({ kind: "error" });
+  });
+
+  it("surfaces RDBG_TX through the remote adapter without breaking RDBG", () => {
+    const adapter = new RemoteProtocolAdapter();
+    expect(adapter.parse("RDBG,100,7,T,76,0,32,1,20,4,1,1,10,0,2,88,1,none", 1234)).toMatchObject({ kind: "frame" });
+    const event = adapter.parse("RDBG_TX,1,100,8,KEY,9,4B0700000000A55A33,2,0,-,0,0,7,0,0,0", 1234);
+    expect(event).toMatchObject({ kind: "event", event: { eventKind: "RDBG_TX", sourceTimeMs: 100 } });
   });
 
   it.each([30, 35, 72])("parses CDBG %i-field layouts", (count) => {

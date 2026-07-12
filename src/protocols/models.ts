@@ -20,6 +20,25 @@ export interface RemoteFrame {
   xReason: string;
 }
 
+export interface RemoteTxEvent {
+  observedAtMs: number;
+  rawLine: string;
+  protocolVersion: 1;
+  ms: number;
+  seq: number;
+  packetType: string;
+  txLen: number;
+  txHex: string;
+  txBytes: number[];
+  txRet: number;
+  ackLen: number;
+  ackHex: string;
+  ackBytes: number[];
+  lost: number;
+  retry: number;
+  args: [number, number, number, number];
+}
+
 export interface ChassisFrame {
   observedAtMs: number;
   rawLine: string;

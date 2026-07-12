@@ -112,6 +112,7 @@ describe("session export", () => {
       "events.csv",
       "remote_raw.log",
       "remote_rdbg.csv",
+      "remote_rdbg_tx.csv",
       "session.json",
     ]);
     expect(decoder.decode(first["remote_raw.log"]!)).toBe("RDBG-A\n");

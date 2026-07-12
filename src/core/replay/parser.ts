@@ -81,7 +81,7 @@ function looksLikeHeader(fields: string[]): boolean {
 function inferFormat(lines: string[], requested: ReplayFormat): Exclude<ReplayFormat, "auto"> {
   if (requested !== "auto") return requested;
   const sample = lines.find((line) => line.trim().length > 0) ?? "";
-  if (/^(?:\s*\[[^\]]+\]\s*)?(?:RDBG|CDBG|CEVT|RDBG_CFG|RDBG_CMD|CDBG_BOOT|\$R1M),/.test(sample)) {
+  if (/^(?:\s*\[[^\]]+\]\s*)?(?:RDBG_TX|RDBG|CDBG|CEVT|RDBG_CFG|RDBG_CMD|CDBG_BOOT|\$R1M),/.test(sample)) {
     return "raw";
   }
   return sample.includes(",") ? "csv" : "raw";

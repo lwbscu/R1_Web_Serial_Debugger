@@ -1,7 +1,7 @@
 import type { SourceRole } from "../core/types";
 
 export function detectProtocolRole(line: string): SourceRole | null {
-  if (/RDBG_CFG,|RDBG_CMD,|RDBG,/.test(line)) return "remote";
+  if (/RDBG_TX,|RDBG_CFG,|RDBG_CMD,|RDBG,/.test(line)) return "remote";
   if (/CDBG_BOOT,|CDBG,|CEVT,/.test(line)) return "chassis";
   if (/\$R1M,/.test(line)) return "locator";
   const text = line.trim();

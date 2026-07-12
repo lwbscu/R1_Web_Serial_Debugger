@@ -96,7 +96,7 @@ test("uses the frozen centered field and +Y forward body convention", () => {
   ]);
 });
 
-test("keeps three workspaces mounted and explains unsupported Web Serial", async ({ page }) => {
+test("keeps workspaces mounted and explains unsupported Web Serial", async ({ page }) => {
   await disableWebSerial(page);
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "双串口通信诊断" })).toBeVisible();
@@ -114,12 +114,32 @@ test("keeps three workspaces mounted and explains unsupported Web Serial", async
   await expect(page.getByLabel("R1 定位场地图")).toBeVisible();
   await expect(page.getByText("直接使用冻结 Python 上位机的原始场地图")).toBeVisible();
 
+  await page.getByRole("button", { name: /遥控器窗口/ }).click();
+  await expect(page.getByRole("heading", { name: "遥控器窗口" })).toBeVisible();
+  await expect(page.getByLabel("遥控器串口侧栏")).toContainText("等待遥控器串口");
+  await expect(page.getByRole("button", { name: "去通信诊断连接串口" })).toBeVisible();
+  await expect(page.getByText("当前命令")).toBeVisible();
+  await expect(page.getByText("协议数组")).toBeVisible();
+
   await page.getByRole("button", { name: /数据示波器/ }).click();
   await expect(page.getByRole("heading", { name: "数据示波器" })).toBeVisible();
   await expect(page.getByText("VOFA 风格多变量时序波形")).toBeVisible();
 
   await page.getByRole("button", { name: /通信诊断/ }).click();
   await expect(page.getByRole("heading", { name: "双串口通信诊断" })).toBeVisible();
+});
+
+test("remote command window reuses communication demo data", async ({ page }) => {
+  await disableWebSerial(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "演示数据" }).click();
+  await page.getByRole("button", { name: /遥控器窗口/ }).click();
+  await expect(page.getByRole("heading", { name: "遥控器窗口" })).toBeVisible();
+  const remoteWindow = page.getByTestId("remote-control-workspace");
+  await expect(remoteWindow.locator(".remote-hero strong")).toContainText(/ADC|MODE|KEY|ACT/);
+  await expect(remoteWindow.getByLabel("遥控器串口侧栏")).toContainText("遥控器串口正在接收");
+  await expect(remoteWindow.locator(".byte-strip code").first()).toBeVisible();
+  await expect(remoteWindow.getByText("效果链路")).toBeVisible();
 });
 
 test("shows progress while stopping and downloading a local recording", async ({ page }) => {

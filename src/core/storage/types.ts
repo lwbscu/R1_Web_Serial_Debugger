@@ -6,6 +6,7 @@ export type CommunicationArtifact =
   | "remote_raw.log"
   | "chassis_raw.log"
   | "remote_rdbg.csv"
+  | "remote_rdbg_tx.csv"
   | "chassis_cdbg.csv"
   | "events.csv"
   | "session.json";
@@ -83,6 +84,7 @@ const COMMUNICATION_ARTIFACTS: readonly CommunicationArtifact[] = [
   "remote_raw.log",
   "chassis_raw.log",
   "remote_rdbg.csv",
+  "remote_rdbg_tx.csv",
   "chassis_cdbg.csv",
   "events.csv",
   "session.json",

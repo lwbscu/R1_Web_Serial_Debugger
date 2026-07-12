@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { CommunicationWorkspace } from "../features/communication/CommunicationWorkspace";
 import { LocatorWorkspace } from "../features/locator/LocatorWorkspace";
+import { RemoteControlWorkspace } from "../features/remoteControl/RemoteControlWorkspace";
 import { AutoSerialDiscovery } from "../features/serial/AutoSerialDiscovery";
 import { WaveformWorkspace } from "../features/waveform/WaveformWorkspace";
 import { BUILD_INFO } from "../shared/buildInfo";
 import { LinkIcon, MapIcon, ShieldIcon, WaveIcon } from "../shared/components/Icons";
 
-type Workspace = "communication" | "locator" | "waveform";
+type Workspace = "communication" | "remote-control" | "locator" | "waveform";
 
 const WORKSPACES = [
   { id: "communication", label: "通信诊断", detail: "RDBG · CDBG", icon: LinkIcon },
+  { id: "remote-control", label: "遥控器窗口", detail: "命令 · ACK", icon: LinkIcon },
   { id: "locator", label: "定位地图", detail: "轨迹 · DT35", icon: MapIcon },
   { id: "waveform", label: "数据示波器", detail: "多变量 · 时间轴", icon: WaveIcon },
 ] as const;
@@ -63,7 +65,8 @@ export function App() {
 
     <div className="content">
       {updateAvailable && <div className="update-banner"><strong>检测到新版本</strong><span>请停止录制后刷新页面，串口不会被网站自动重连。</span></div>}
-      <div className={active === "communication" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "communication"}><CommunicationWorkspace active={active === "communication"} /></div>
+      <div className={active === "communication" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "communication"}><CommunicationWorkspace active={active === "communication" || active === "remote-control"} /></div>
+      <div className={active === "remote-control" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "remote-control"}><RemoteControlWorkspace active={active === "remote-control"} onOpenCommunication={() => setActive("communication")} /></div>
       <div className={active === "locator" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "locator"}><LocatorWorkspace active={active === "locator"} /></div>
       <div className={active === "waveform" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "waveform"}><WaveformWorkspace active={active === "waveform"} /></div>
     </div>
