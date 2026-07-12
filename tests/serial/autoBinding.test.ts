@@ -88,4 +88,30 @@ describe("自动识别后的会话绑定注册表", () => {
     expect(disconnectAndRelease).toHaveBeenCalledOnce();
     expect(registry.ownerOf(selected)).toBeNull();
   });
+
+  it("wrong-role 连续确认后可从错误角色迁移到空闲目标角色", async () => {
+    const registry = new SerialSessionRegistry();
+    const selected = port();
+    const remoteDisconnect = vi.fn(async () => undefined);
+    const chassisBind = vi.fn(async () => undefined);
+    registry.register("remote", {
+      snapshot: () => snapshot("remote", "reading"),
+      bindAndConnect: async () => undefined,
+      disconnectAndRelease: remoteDisconnect,
+    });
+    registry.register("chassis", {
+      snapshot: () => snapshot("chassis"),
+      bindAndConnect: chassisBind,
+      disconnectAndRelease: async () => undefined,
+    });
+    expect(registry.claimPort("remote", selected).ok).toBe(true);
+
+    const result = await registry.migrateClaimedPort("remote", "chassis");
+
+    expect(result).toMatchObject({ ok: true, role: "chassis" });
+    expect(result.message).toContain("自动迁移");
+    expect(remoteDisconnect).toHaveBeenCalledOnce();
+    expect(chassisBind).toHaveBeenCalledWith(selected);
+    expect(registry.ownerOf(selected)).toBe("chassis");
+  });
 });

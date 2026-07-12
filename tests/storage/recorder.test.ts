@@ -14,7 +14,7 @@ import { contextForSide } from "../../src/core/locator";
 
 const decoder = new TextDecoder();
 
-function manifest(kind: "communication" | "locator" = "communication") {
+function manifest(kind: "communication" | "locator" | "global" = "communication") {
   return {
     schemaVersion: 1 as const,
     sessionId: `${kind}-test`,
@@ -60,7 +60,7 @@ describe("SessionRecorder", () => {
     await expect(SessionRecorder.create(store, {
       ...manifest(),
       locatorCoordinates: contextForSide("red", "official"),
-    })).rejects.toThrow(/locator session/);
+    })).rejects.toThrow(/locator\/global session/);
   });
 
   it("splits a single oversized append across bounded segments", async () => {
@@ -182,5 +182,43 @@ describe("session export", () => {
     const entries = unzipSync(volume!.bytes);
     const metadata = JSON.parse(decoder.decode(entries["metadata.json"]!));
     expect(metadata.locatorCoordinates).toEqual(locatorManifest.locatorCoordinates);
+  });
+
+  it("exports a global three-port session with locator metadata and connection status", async () => {
+    const store = new MemoryFileStore();
+    const globalManifest = {
+      ...manifest("global"),
+      locatorCoordinates: contextForSide("blue", "preliminary"),
+    };
+    const recorder = await SessionRecorder.create(store, globalManifest);
+    await recorder.append("remote_raw.log", "100,RDBG,...\n", 1);
+    await recorder.append("remote_rdbg_tx.csv", "100,RDBG_TX,...\n", 1);
+    await recorder.append("chassis_cdbg.csv", "105,CDBG,3,151,...\n", 2);
+    await recorder.append("locator_raw.log", "[0.1] $R1M,...\n", 3);
+    await recorder.append("locator_frames.csv", "110,$R1M,...\n", 3);
+    await recorder.append("locator_display_frames.csv", "110,0,1,0,0,0\n", 3);
+    await recorder.append("connection_status.csv", encodeCsvRow([1, "remote", "connected"]));
+    await recorder.append("connection_status.csv", encodeCsvRow([1, "chassis", "not_connected"]));
+    await recorder.stop(4);
+
+    const [volume] = await exportSession(store, globalManifest.sessionId, { compressionLevel: 0 });
+    const entries = unzipSync(volume!.bytes);
+    expect(Object.keys(entries).sort()).toEqual([
+      "chassis_cdbg.csv",
+      "chassis_raw.log",
+      "connection_status.csv",
+      "events.csv",
+      "locator_display_frames.csv",
+      "locator_frames.csv",
+      "locator_raw.log",
+      "remote_raw.log",
+      "remote_rdbg.csv",
+      "remote_rdbg_tx.csv",
+      "session.json",
+    ]);
+    const metadata = JSON.parse(decoder.decode(entries["session.json"]!));
+    expect(metadata.kind).toBe("global");
+    expect(metadata.locatorCoordinates).toEqual(globalManifest.locatorCoordinates);
+    expect(decoder.decode(entries["connection_status.csv"]!)).toContain("not_connected");
   });
 });

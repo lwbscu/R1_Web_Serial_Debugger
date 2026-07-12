@@ -14,6 +14,9 @@ const REPLAY_ARTIFACTS = new Set([
   "raw_serial.log",
   "raw_frames.csv",
   "display_frames.csv",
+  "locator_raw.log",
+  "locator_frames.csv",
+  "locator_display_frames.csv",
 ]);
 
 export interface LoadReplayOptions extends ParseReplayOptions {
@@ -44,8 +47,8 @@ function coordinateSpaceForTrack(
   metadata: unknown,
   metadataState: "absent" | "valid" | "invalid",
 ): ReplayCoordinateSpace {
-  if (name === "raw_serial.log" || name === "raw_frames.csv") return "start-relative";
-  if (name === "display_frames.csv") {
+  if (name === "raw_serial.log" || name === "raw_frames.csv" || name === "locator_raw.log" || name === "locator_frames.csv") return "start-relative";
+  if (name === "display_frames.csv" || name === "locator_display_frames.csv") {
     if (metadataState === "invalid") return "unknown";
     // Desktop bundles predate coordinate metadata and baked display values into
     // field coordinates. An explicit but unsupported value stays ambiguous.

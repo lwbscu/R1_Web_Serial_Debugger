@@ -32,6 +32,7 @@ export class PortSession<T> {
   private error: string | null = null;
   private stats = EMPTY_STATS();
   private consecutiveWrongRole = 0;
+  private wrongRoleNotified = false;
   private stopping = false;
 
   constructor(options: PortSessionOptions<T>) {
@@ -176,9 +177,19 @@ export class PortSession<T> {
       this.detectedRole = detectedRole;
       this.consecutiveWrongRole += 1;
       this.stats.wrongRoleLines += 1;
+      if (!this.wrongRoleNotified && this.consecutiveWrongRole >= this.options.wrongRoleThreshold && this.port) {
+        this.wrongRoleNotified = true;
+        this.options.onWrongRole?.({
+          fromRole: this.role,
+          detectedRole,
+          port: this.port,
+          snapshot: this.snapshot(observedAtMs),
+        });
+      }
     } else if (detectedRole === this.role) {
       this.detectedRole = detectedRole;
       this.consecutiveWrongRole = 0;
+      this.wrongRoleNotified = false;
     }
     const outcome: ParseOutcome<T> = this.options.adapter.parse(line, observedAtMs);
     if (outcome.kind === "frame") {
@@ -244,6 +255,7 @@ export class PortSession<T> {
     this.lastValidFrameAtMs = null;
     this.detectedRole = null;
     this.consecutiveWrongRole = 0;
+    this.wrongRoleNotified = false;
   }
 
   private emit(): void {

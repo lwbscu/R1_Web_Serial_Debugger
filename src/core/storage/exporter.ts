@@ -137,7 +137,7 @@ export async function* exportSessionVolumes(
   const width = Math.max(3, String(groups.length).length);
   const stem = safeDownloadStem(sessionId);
   const metadataName: RecordingArtifact =
-    manifest.kind === "communication" ? "session.json" : "metadata.json";
+    manifest.kind === "locator" ? "metadata.json" : "session.json";
   const totalBytes = segmentBytes(checkpoint.segments);
   let bytesRead = 0;
 

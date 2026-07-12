@@ -4,14 +4,13 @@ import { encodeCsvRow } from "../../core/storage";
 import { publishFrame, telemetryHub } from "../../core/telemetry";
 import { ChassisProtocolAdapter, parseRdbgTx, RemoteProtocolAdapter, type ChassisFrame, type RemoteFrame, type RemoteTxEvent } from "../../protocols";
 import { downloadText } from "../../shared/download";
-import { RecordIcon } from "../../shared/components/Icons";
 import { InfoTip } from "../../shared/components/InfoTip";
 import { SerialConnectionBar } from "../../shared/components/SerialConnectionBar";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoRemoteFrame, demoRemoteTxEvent } from "../demo/demoData";
-import { RecordingDownloadProgress } from "../recording/RecordingDownloadProgress";
-import { useRecorder } from "../recording/useRecorder";
+import type { RecorderController } from "../recording/useRecorder";
 import { usePortSession } from "../serial/usePortSession";
+import { requestOpenSerialDiscovery } from "../serial/discoveryDialogStore";
 import { MetricPanel } from "./components";
 import { diagnoseLink, freshMetricContext } from "./diagnosis";
 import { DiagnosticEventDetector, firmwareEventSeverity, type DiagnosticEvent } from "./eventDetector";
@@ -42,10 +41,9 @@ function displayTime(at: number): string {
   return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", fractionalSecondDigits: 3, hour12: false }).format(at);
 }
 
-export function CommunicationWorkspace({ active = true }: { active?: boolean }) {
+export function CommunicationWorkspace({ active = true, recorder }: { active?: boolean; recorder: RecorderController }) {
   const remoteAdapter = useMemo(() => new RemoteProtocolAdapter(), []);
   const chassisAdapter = useMemo(() => new ChassisProtocolAdapter(), []);
-  const recorder = useRecorder("communication");
   const [remote, setRemote] = useState<RemoteFrame | null>(null);
   const [chassis, setChassis] = useState<ChassisFrame | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -174,8 +172,8 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   });
   const { supported: remoteSupported, snapshot: remoteSnapshot } = remotePort;
   const { supported: chassisSupported, snapshot: chassisSnapshot } = chassisPort;
-  const { select: selectRemotePort, connect: connectRemotePort, close: closeRemotePort } = remotePort;
-  const { select: selectChassisPort, connect: connectChassisPort, close: closeChassisPort } = chassisPort;
+  const { connect: connectRemotePort, close: closeRemotePort } = remotePort;
+  const { connect: connectChassisPort, close: closeChassisPort } = chassisPort;
   const remoteWasReading = useRef(false);
   const chassisWasReading = useRef(false);
 
@@ -188,16 +186,16 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   }, [chassisSnapshot, chassisSupported]);
 
   useEffect(() => remoteDebugStore.registerPortActions("remote", {
-    select: async () => { stopDemo(); resetRemote(); await selectRemotePort(); },
+    select: async () => { stopDemo(); resetRemote(); requestOpenSerialDiscovery(); },
     connect: async () => { stopDemo(); await connectRemotePort(); },
     close: async () => { resetRemote(); await closeRemotePort(); },
-  }), [selectRemotePort, connectRemotePort, closeRemotePort, resetRemote, stopDemo]);
+  }), [connectRemotePort, closeRemotePort, resetRemote, stopDemo]);
 
   useEffect(() => remoteDebugStore.registerPortActions("chassis", {
-    select: async () => { stopDemo(); resetChassis(); await selectChassisPort(); },
+    select: async () => { stopDemo(); resetChassis(); requestOpenSerialDiscovery(); },
     connect: async () => { stopDemo(); await connectChassisPort(); },
     close: async () => { resetChassis(); await closeChassisPort(); },
-  }), [selectChassisPort, connectChassisPort, closeChassisPort, resetChassis, stopDemo]);
+  }), [connectChassisPort, closeChassisPort, resetChassis, stopDemo]);
 
   useEffect(() => {
     if (remoteWasReading.current && remotePort.snapshot.lifecycle !== "reading") {
@@ -249,7 +247,6 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
     else downloadText(name, generateHtmlDiagnosticReport(input), "text/html;charset=utf-8");
   };
   const serialBusy = remotePort.snapshot.lifecycle === "reading" || chassisPort.snapshot.lifecycle === "reading";
-  const recordingButtonLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始本地录制";
   const shownLogs = streamPaused ? frozenConsole.current?.logs ?? logs : logs;
   const shownFrames = streamPaused ? frozenConsole.current?.frames ?? frames : frames;
   const shownEvents = streamPaused ? frozenConsole.current?.events ?? events : events;
@@ -262,16 +259,15 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
   return <main className="workspace communication-workspace" data-testid="communication-workspace">
     <WorkspaceHeader kicker="R1 LINK DIAGNOSTICS" title="双串口通信诊断" description="严格对拍本地 Python 上位机：端口健康与业务诊断分层显示，悬停任一指标可查看阈值、异常判断和排查路径。"
       meta={<><span>RDBG 18 fields</span><span>CDBG 30 / 35 / 72 / 90 / v3-151 fields</span><span>stale 1.5 s</span></>}
-      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className={recorder.active ? "danger" : ""} disabled={recorder.exporting} onClick={() => void (recorder.active ? recorder.stopAndDownload() : recorder.start())}><RecordIcon />{recordingButtonLabel}</button><InfoTip label="本地录制说明">录制会把完整原始帧、结构化帧和事件分片暂存在本站的浏览器私有存储中；停止后才生成下载包。暂停滚动和清空界面都不会停止正在进行的录制。</InfoTip></>} />
+      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={() => demoActive ? stopDemo() : setDemoActive(true)}>{demoActive ? "停止演示" : "演示数据"}</button><button type="button" className="secondary" onClick={requestOpenSerialDiscovery}>智能连接串口</button><InfoTip label="统一录制说明">三串口统一录制按钮在左侧“三串口连接中心”。录制会同时包含遥控器、底盘和码盘/定位板；未连接角色写入 not_connected，后续接入会自动续录。</InfoTip></>} />
 
     {!remotePort.supported && <div className="unsupported">实时串口需要桌面版 Chrome/Edge 和 HTTPS。当前仍可使用演示数据查看完整诊断界面。</div>}
-    <RecordingDownloadProgress progress={recorder.downloadProgress} />
 
     <div className="connection-stack">
       <SerialConnectionBar title="遥控器 / RDBG" subtitle="Remote USART1" supported={remotePort.supported} snapshot={remotePort.snapshot}
-        onSelect={() => { stopDemo(); resetRemote(); void remotePort.select(); }} onConnect={() => { stopDemo(); void remotePort.connect(); }} onClose={() => { resetRemote(); void remotePort.close(); }} />
+        selectLabel="智能识别" onSelect={requestOpenSerialDiscovery} onAdvancedSelect={() => { stopDemo(); resetRemote(); void remotePort.select(); }} onConnect={() => { stopDemo(); void remotePort.connect(); }} onClose={() => { resetRemote(); void remotePort.close(); }} />
       <SerialConnectionBar title="底盘 / CDBG" subtitle="Chassis USART2" supported={chassisPort.supported} snapshot={chassisPort.snapshot}
-        onSelect={() => { stopDemo(); resetChassis(); void chassisPort.select(); }} onConnect={() => { stopDemo(); void chassisPort.connect(); }} onClose={() => { resetChassis(); void chassisPort.close(); }} />
+        selectLabel="智能识别" onSelect={requestOpenSerialDiscovery} onAdvancedSelect={() => { stopDemo(); resetChassis(); void chassisPort.select(); }} onConnect={() => { stopDemo(); void chassisPort.connect(); }} onClose={() => { resetChassis(); void chassisPort.close(); }} />
     </div>
 
     <section className={`diagnosis-banner diagnosis-${diagnosis.status}`}>
@@ -304,7 +300,5 @@ export function CommunicationWorkspace({ active = true }: { active?: boolean }) 
       {activeTab === "events" && <div className="event-list console-events" role="tabpanel">{shownEvents.length === 0 ? <p className="empty">尚无诊断或固件事件。</p> : shownEvents.slice(-300).reverse().map((event, index) => <div className={`event ${event.severity}`} key={`${event.observedAtMs}-${event.kind}-${index}`}><time>{new Date(event.observedAtMs).toLocaleTimeString()}</time><strong>{event.kind}</strong><span>{event.detail}</span></div>)}</div>}
     </section>
 
-    {recorder.error && <p className="error">录制：{recorder.error}</p>}
-    {recorder.recoverable.length > 0 && <section className="recovery"><strong>可恢复会话</strong>{recorder.recoverable.map((item) => <button className="secondary" key={item.manifest.sessionId} disabled={recorder.exporting} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{item.manifest.sessionId}（{Math.round(item.totalBytes / 1024)} KiB）</button>)}</section>}
   </main>;
 }

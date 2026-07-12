@@ -69,7 +69,7 @@ export class SessionRecorder {
     options: SessionRecorderOptions = {},
   ): Promise<SessionRecorder> {
     if (manifest.kind === "communication" && manifest.locatorCoordinates !== undefined) {
-      throw new Error("locatorCoordinates may only be stored in a locator session");
+      throw new Error("locatorCoordinates may only be stored in a locator/global session");
     }
     if (
       manifest.locatorCoordinates !== undefined &&

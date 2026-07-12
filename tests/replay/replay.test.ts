@@ -117,23 +117,28 @@ describe("loadReplayZip", () => {
     const archive = zipSync({
       "raw_serial.log": new TextEncoder().encode("0,0,0\n"),
       "raw_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
+      "locator_raw.log": new TextEncoder().encode("1,1,0\n"),
+      "locator_frames.csv": new TextEncoder().encode("x,y,yaw\n1,1,0\n"),
       "metadata.json": new TextEncoder().encode('{"coordinateSpace":"field"}'),
     });
     const bundle = loadReplayZip(archive);
     expect(bundle.tracks.map((track) => [track.name, track.coordinateSpace])).toEqual([
       ["raw_serial.log", "start-relative"],
       ["raw_frames.csv", "start-relative"],
+      ["locator_raw.log", "start-relative"],
+      ["locator_frames.csv", "start-relative"],
     ]);
   });
 
   it("uses new web metadata for relative display frames", () => {
     const archive = zipSync({
       "display_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
+      "locator_display_frames.csv": new TextEncoder().encode("x,y,yaw\n0,0,0\n"),
       "metadata.json": new TextEncoder().encode(JSON.stringify({
         locatorCoordinates: contextForSide("blue", "preliminary"),
       })),
     });
-    expect(loadReplayZip(archive).tracks[0]?.coordinateSpace).toBe("start-relative");
+    expect(loadReplayZip(archive).tracks.map((track) => track.coordinateSpace)).toEqual(["start-relative", "start-relative"]);
   });
 
   it("keeps legacy official metadata readable for relative display frames", () => {

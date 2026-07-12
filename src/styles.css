@@ -62,6 +62,34 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .sidebar nav button.active small { color: #77a99b; }
 .nav-indicator { width: 4px; height: 4px; background: transparent; border-radius: 50%; }
 .sidebar nav button.active .nav-indicator { background: var(--accent); box-shadow: 0 0 9px var(--accent); }
+.serial-center { margin: 14px 0 12px; }
+.serial-center .sidebar-section-label { padding: 0 8px 8px; }
+.serial-center-card { display: grid; gap: 10px; padding: 11px; border: 1px solid #203542; border-radius: 12px; background: rgba(10, 19, 27, .68); box-shadow: 0 14px 34px rgba(0, 0, 0, .14); }
+.serial-center-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.serial-center-head > div { display: grid; gap: 2px; min-width: 0; }
+.serial-center-head strong { color: #e3f5ef; font-size: 12px; }
+.serial-center-head small { color: #6f8799; font: 9px ui-monospace, Consolas, monospace; }
+.serial-center-actions { display: grid; grid-template-columns: 1fr; gap: 7px; }
+.serial-center-actions button { display: inline-flex; width: 100%; justify-content: center; align-items: center; gap: 6px; padding: 8px 9px; font-size: 11px; }
+.serial-center-actions svg { width: 14px; height: 14px; }
+.serial-role-list { display: grid; gap: 6px; }
+.serial-role-card { display: grid; gap: 7px; padding: 8px; border: 1px solid #1b2c38; border-left: 3px solid var(--unknown); border-radius: 9px; background: #08131c; }
+.serial-role-card[data-health="valid"] { border-left-color: var(--ok); }
+.serial-role-card[data-health="bytes-only"], .serial-role-card[data-health="stale"] { border-left-color: var(--warn); }
+.serial-role-card[data-health="wrong-role"] { border-left-color: var(--error); }
+.serial-role-card > div:first-child { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 7px; align-items: center; }
+.serial-role-card .status-orb { grid-row: 1 / span 2; margin: 0; }
+.serial-role-card strong { overflow: hidden; color: #dcebf4; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.serial-role-card small { overflow: hidden; color: #607789; font: 8px ui-monospace, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.serial-role-card dl { display: grid; gap: 3px; margin: 0; }
+.serial-role-card dl div { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 5px; }
+.serial-role-card dt { color: #526c7e; font: 8px ui-monospace, Consolas, monospace; }
+.serial-role-card dd { margin: 0; overflow: hidden; color: #91a8b8; font: 9px ui-monospace, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.serial-role-message { margin: 0; color: #7eb9a8; font-size: 9px; line-height: 1.35; }
+.serial-center .recording-progress { grid-template-columns: 1fr; gap: 8px; margin: 0; padding: 9px; }
+.serial-center-recovery { display: grid; gap: 6px; color: #8199aa; font-size: 10px; }
+.serial-center-recovery button { overflow: hidden; padding: 6px 7px; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.serial-center-error { margin: 0; font-size: 10px; }
 .sidebar-spacer { flex: 1; min-height: 25px; }
 .trust-card { display: grid; grid-template-columns: 24px 1fr; gap: 10px; padding: 13px; color: #a8c5bd; border: 1px solid #23463f; border-radius: 10px; background: rgba(25, 74, 65, .2); }
 .trust-card svg { color: var(--accent); }
@@ -73,6 +101,8 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .sidebar footer time { padding-top: 7px; border-top: 1px solid #182731; }
 
 .content { min-width: 0; }
+.global-progress-host { width: min(1680px, 100%); margin: 0 auto; padding: 16px clamp(20px, 2.6vw, 46px) 0; }
+.global-progress-host:empty { display: none; }
 .workspace-host { display: none; }
 .workspace-host.active { display: block; }
 .workspace { width: min(1680px, 100%); margin: auto; padding: 30px clamp(20px, 2.6vw, 46px) 64px; }
@@ -113,6 +143,7 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .status-orb.stale, .status-orb.bytes-only, .status-dot.stale, .status-dot.bytes-only { background: var(--warn); }
 .status-orb.wrong-role, .status-dot.wrong-role { background: var(--error); }
 .serial-actions { display: flex; gap: 7px; justify-content: flex-end; }
+.serial-actions .serial-advanced-select { padding-inline: 8px; font-size: 10px; }
 .serial-counters { grid-column: 1 / -1; display: flex; gap: 18px; margin: -1px 0 0 20px; }
 .serial-counters div { display: flex; gap: 6px; align-items: baseline; }
 .serial-counters dt { color: #506a7c; font: 9px ui-monospace, monospace; }
@@ -458,11 +489,14 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 @media (max-width: 1500px) {
-  .app-shell { grid-template-columns: 86px minmax(0, 1fr); }
+  .app-shell { grid-template-columns: 168px minmax(0, 1fr); }
   .sidebar { padding-inline: 10px; }
   .brand { justify-content: center; padding-inline: 0; }
   .brand > div, .sidebar-section-label, .sidebar nav button span, .sidebar footer { display: none; }
   .sidebar nav button { display: grid; place-items: center; grid-template-columns: 1fr; padding: 13px; }
+  .serial-center .sidebar-section-label, .serial-center-head small, .serial-role-list, .serial-center-recovery { display: none; }
+  .serial-center-card { padding: 8px; }
+  .serial-center-actions button { padding: 7px 6px; font-size: 10px; }
   .nav-indicator { position: absolute; right: 6px; }
   .trust-card { display: grid; place-items: center; grid-template-columns: 1fr; gap: 6px; padding: 10px 5px; text-align: center; }
   .trust-card div { display: block; }
@@ -509,11 +543,15 @@ input, select { color: var(--text); border: 1px solid var(--border-strong); bord
   .side-selector { width: 100%; }
   .side-selector button { flex: 1; }
   .app-shell { display: block; }
-  .sidebar { position: sticky; width: 100%; height: auto; padding: 8px 12px; flex-direction: row; align-items: center; border-right: 0; border-bottom: 1px solid #1d2d39; }
+  .sidebar { position: sticky; width: 100%; height: auto; padding: 8px 12px; flex-flow: row wrap; align-items: center; border-right: 0; border-bottom: 1px solid #1d2d39; }
   .brand { padding: 0; }
   .brand-mark { width: 38px; height: 38px; border-radius: 9px; }
   .sidebar nav { display: flex; margin-left: auto; }
   .sidebar nav button { width: 44px; padding: 10px; }
+  .serial-center { display: block; order: 3; flex: 1 0 100%; min-width: 0; margin: 6px 0 0; }
+  .serial-center-card { padding: 6px; }
+  .serial-center-head, .serial-center-actions, .serial-role-list, .serial-center-recovery { display: none; }
+  .serial-center .recording-progress { display: grid; margin: 0; padding: 7px; }
   .sidebar-spacer, .trust-card { display: none; }
   .workspace { padding: 22px 13px 45px; }
   .workspace-header, .workspace-head { align-items: flex-start; flex-direction: column; }

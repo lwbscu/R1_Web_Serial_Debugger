@@ -12,14 +12,14 @@ import { encodeCsvRow } from "../../core/storage";
 import { publishFrame, telemetryHub } from "../../core/telemetry";
 import { LocatorProtocolAdapter, type LocatorFrame } from "../../protocols";
 import { downloadText } from "../../shared/download";
-import { RecordIcon } from "../../shared/components/Icons";
 import { InfoTip } from "../../shared/components/InfoTip";
 import { SerialConnectionBar } from "../../shared/components/SerialConnectionBar";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { numberText } from "../../shared/format";
 import { demoLocatorFrame } from "../demo/demoData";
-import { RecordingDownloadProgress } from "../recording/RecordingDownloadProgress";
-import { useRecorder } from "../recording/useRecorder";
+import type { RecorderController } from "../recording/useRecorder";
+import { remoteDebugStore } from "../remoteControl/remoteDebugStore";
+import { requestOpenSerialDiscovery } from "../serial/discoveryDialogStore";
 import { usePortSession } from "../serial/usePortSession";
 import { FieldMap, type MapTrails } from "./FieldMap";
 import type { Point } from "./geometry";
@@ -40,10 +40,16 @@ function appendPoint(items: LocatorFrame[], frame: LocatorFrame, x: keyof Locato
 
 function sensorClass(ok: boolean | undefined): string { return ok ? "online" : "offline"; }
 
-export function LocatorWorkspace({ active = true }: { active?: boolean }) {
+export function LocatorWorkspace({
+  active = true,
+  recorder,
+  onCoordinateContextChange,
+}: {
+  active?: boolean;
+  recorder: RecorderController;
+  onCoordinateContextChange?: (context: LocatorCoordinateContext) => void;
+}) {
   const adapter = useMemo(() => new LocatorProtocolAdapter(), []);
-  const recorder = useRecorder("locator");
-  const [recordingStarting, setRecordingStarting] = useState(false);
   const [matchType, setMatchType] = useState<LocatorMatchType>("official");
   const [side, setSide] = useState<LocatorSide>("red");
   const coordinateContext = useMemo(() => contextForSide(side, matchType), [matchType, side]);
@@ -77,17 +83,17 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
       const line = [next.posXcm, next.posYcm, next.posYawDeg, next.lidarXcm, next.lidarYcm, next.lidarYawDeg, next.encoderXcm, next.encoderYcm, next.h30YawDeg, next.dt35_1mm, next.dt35_2mm, next.status].map((value) => Number(value).toFixed(3)).join(",");
       setLogs((old) => [...old, line].slice(-2000));
     }
-    if (record && origin !== "demo") void recorder.append("display_frames.csv", encodeCsvRow([at, next.sourceTimeMs, next.seq, next.posXcm, next.posYcm, next.posYawDeg, next.calibXcm, next.calibYcm, next.calibYawDeg, next.lidarXcm, next.lidarYcm, next.lidarYawDeg, next.dt35_1mm, next.dt35_2mm, next.status]));
+    if (record && origin !== "demo") void recorder.append("locator_display_frames.csv", encodeCsvRow([at, next.sourceTimeMs, next.seq, next.posXcm, next.posYcm, next.posYawDeg, next.calibXcm, next.calibYcm, next.calibYawDeg, next.lidarXcm, next.lidarYcm, next.lidarYawDeg, next.dt35_1mm, next.dt35_2mm, next.status]));
   }, [recorder]);
 
   const onSerial = useCallback((received: ReceivedLine<LocatorFrame>) => {
     setLogs((old) => [...old, received.line].slice(-2000));
-    void recorder.append("raw_serial.log", `[${Date.now() / 1000}] ${received.line}\n`);
+    void recorder.append("locator_raw.log", `[${Date.now() / 1000}] ${received.line}\n`);
     if (received.outcome.kind === "frame") {
       consumeFrame(received.outcome.frame);
-      void recorder.append("raw_frames.csv", encodeCsvRow([Date.now(), received.line]));
+      void recorder.append("locator_frames.csv", encodeCsvRow([Date.now(), received.line]));
     } else if (received.outcome.kind === "error") {
-      void recorder.append("events.log", encodeCsvRow([Date.now(), "parse_error", received.outcome.code, received.outcome.detail]));
+      void recorder.append("events.csv", encodeCsvRow([Date.now(), "locator_parse_error", "warn", `${received.outcome.code} — ${received.outcome.detail}`]));
     }
   }, [consumeFrame, recorder]);
 
@@ -111,6 +117,37 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
     setFrame(null);
     setTrails(EMPTY_TRAILS);
   });
+  const { select: selectLocatorPort, connect: connectLocatorPort, close: closeLocatorPort } = port;
+
+  useEffect(() => {
+    onCoordinateContextChange?.(coordinateContext);
+  }, [coordinateContext, onCoordinateContextChange]);
+
+  useEffect(() => {
+    remoteDebugStore.publishPort("locator", port.supported, port.snapshot);
+  }, [port.snapshot, port.supported]);
+
+  useEffect(() => remoteDebugStore.registerPortActions("locator", {
+    select: async () => {
+      stopDemo();
+      stopReplay();
+      setFrame(null);
+      setTrails(EMPTY_TRAILS);
+      requestOpenSerialDiscovery();
+    },
+    connect: async () => {
+      stopDemo();
+      stopReplay();
+      setFrame(null);
+      setTrails(EMPTY_TRAILS);
+      await connectLocatorPort();
+    },
+    close: async () => {
+      setFrame(null);
+      telemetryHub.releaseSource("locator", "serial");
+      await closeLocatorPort();
+    },
+  }), [closeLocatorPort, connectLocatorPort, stopDemo, stopReplay]);
   const wasReading = useRef(false);
   useEffect(() => {
     if (wasReading.current && port.snapshot.lifecycle !== "reading") { setFrame(null); telemetryHub.releaseSource("locator", "serial"); }
@@ -145,14 +182,14 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
 
   const openReplay = async (file: File) => {
     try {
-      if (recordingStarting || recorder.active || recorder.exporting) throw new Error("录制期间不能加载回放或改变阵营，请先停止并下载当前录制。");
+      if (recorder.active || recorder.exporting) throw new Error("录制期间不能加载回放或改变阵营，请先停止并下载当前录制。");
       if (port.snapshot.lifecycle === "reading") throw new Error("请先断开定位串口，再加载回放文件。");
       stopDemo();
       clockRef.current?.stop();
       const bundle = await loadReplayFile(file);
-      const selectedTrack = bundle.tracks.find((track) => /raw_serial/i.test(track.name))
-        ?? bundle.tracks.find((track) => /raw_frames/i.test(track.name))
-        ?? bundle.tracks.find((track) => /display_frames/i.test(track.name))
+      const selectedTrack = bundle.tracks.find((track) => /(?:locator_raw|raw_serial)/i.test(track.name))
+        ?? bundle.tracks.find((track) => /(?:locator_frames|raw_frames)/i.test(track.name))
+        ?? bundle.tracks.find((track) => /(?:locator_display_frames|display_frames)/i.test(track.name))
         ?? bundle.tracks[0];
       if (!selectedTrack) throw new Error("回放包中没有可用的定位数据轨道。");
       if (selectedTrack.coordinateSpace === "unknown") throw new Error("该回放无法确认坐标空间，已拒绝静默猜测。请使用包含 metadata.json 的新会话包或原始串口日志。");
@@ -198,14 +235,7 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   const exportSnapshot = () => downloadText(`r1-locator-state-${Date.now()}.json`, JSON.stringify({ generatedAt: new Date().toISOString(), frame, mouse, renderContext: coordinateContext, replay }, null, 2), "application/json;charset=utf-8");
   const resetViewData = () => { setTrails(EMPTY_TRAILS); setFrame(null); };
   const serialBusy = port.snapshot.lifecycle === "reading";
-  const recordingButtonLabel = recorder.exporting ? "正在生成下载" : recorder.active ? "停止并下载" : "开始本地录制";
-  const startSelectionLocked = recordingStarting || recorder.active || recorder.exporting;
-  const startRecording = async () => {
-    if (startSelectionLocked) return;
-    setRecordingStarting(true);
-    try { await recorder.start({ locatorCoordinates: coordinateContext }); }
-    finally { setRecordingStarting(false); }
-  };
+  const startSelectionLocked = recorder.active || recorder.exporting;
   const visibleLogs = rawPaused ? frozenLogs.current ?? logs : logs;
   const toggleRawPause = () => {
     if (rawPaused) frozenLogs.current = null;
@@ -216,13 +246,12 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
   return <main className="workspace locator-workspace" data-testid="locator-workspace">
     <WorkspaceHeader kicker="R1 LOCATER MAP" title="定位地图" description="直接使用冻结 Python 上位机的原始场地图与 R1 机器人贴图；支持鼠标锚点缩放、拖拽平移、图层控制、轨迹及 DT35 场地残差悬停。"
       meta={<><span>1215 × 1210 cm</span><span>起点相对坐标</span><span>+Y forward</span><span>30 FPS UI</span></>}
-      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={toggleDemo}>{demoActive ? "停止演示" : "演示轨迹"}</button><button className="secondary" onClick={saveMap}>导出地图画布</button><button type="button" className={recorder.active ? "danger" : ""} disabled={recorder.exporting || recordingStarting} onClick={() => void (recorder.active ? recorder.stopAndDownload() : startRecording())}><RecordIcon />{recordingStarting ? "正在启动录制" : recordingButtonLabel}</button></>} />
+      actions={<><button type="button" className={demoActive ? "selected" : "secondary"} disabled={!demoActive && serialBusy} onClick={toggleDemo}>{demoActive ? "停止演示" : "演示轨迹"}</button><button className="secondary" onClick={saveMap}>导出地图画布</button><button type="button" className="secondary" onClick={requestOpenSerialDiscovery}>智能连接串口</button></>} />
 
     {!port.supported && <div className="unsupported">当前浏览器不支持 Web Serial。日志回放、地图交互和演示轨迹仍可使用；实时采集请使用桌面版 Chrome/Edge。</div>}
-    <RecordingDownloadProgress progress={recorder.downloadProgress} />
 
     <SerialConnectionBar title="定位板 / Locator" subtitle="USART1 CSV · $R1M" supported={port.supported} snapshot={port.snapshot}
-      onSelect={() => { stopDemo(); stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); void port.select(); }} onConnect={() => { stopDemo(); stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); void port.connect(); }} onClose={() => { setFrame(null); telemetryHub.releaseSource("locator", "serial"); void port.close(); }} />
+      selectLabel="智能识别" onSelect={requestOpenSerialDiscovery} onAdvancedSelect={() => { stopDemo(); stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); void selectLocatorPort(); }} onConnect={() => { stopDemo(); stopReplay(); setFrame(null); setTrails(EMPTY_TRAILS); void connectLocatorPort(); }} onClose={() => { setFrame(null); telemetryHub.releaseSource("locator", "serial"); void closeLocatorPort(); }} />
 
     <div className="locator-studio">
       <aside className="locator-side locator-replay-panel">
@@ -289,7 +318,5 @@ export function LocatorWorkspace({ active = true }: { active?: boolean }) {
       </aside>
     </div>
 
-    {recorder.error && <p className="error">录制：{recorder.error}</p>}
-    {recorder.recoverable.length > 0 && <section className="recovery"><strong>可恢复会话</strong>{recorder.recoverable.map((item) => <button className="secondary" key={item.manifest.sessionId} disabled={recorder.exporting} onClick={() => void recorder.downloadRecovered(item.manifest.sessionId)}>{item.manifest.sessionId}（{Math.round(item.totalBytes / 1024)} KiB）</button>)}</section>}
   </main>;
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { PortSnapshot } from "../../core/serial";
 import { WorkspaceHeader } from "../../shared/components/WorkspaceHeader";
 import { demoChassisFrame, demoRemoteFrame, demoRemoteTxEvent } from "../demo/demoData";
+import { requestOpenSerialDiscovery } from "../serial/discoveryDialogStore";
 import { buildRemoteCommandView, formatHexBytes, type RemoteCommandStatus } from "./model";
 import { remoteDebugStore, type RemoteDebugPortState, useRemoteDebugState } from "./remoteDebugStore";
 
@@ -187,7 +188,8 @@ export function RemoteControlWorkspace({ active = true, onOpenCommunication }: R
           <div><dt>底盘参考</dt><dd>{portLifecycleLabel(chassisSnapshot)}</dd></div>
         </dl>
         <div className="remote-serial-actions">
-          <button type="button" className="secondary" disabled={!remotePort.supported || !remotePort.controlsReady || remotePortReading || remotePortBusy} onClick={() => void remoteDebugStore.selectPort("remote")}>选择遥控器串口</button>
+          <button type="button" className="secondary" disabled={!remotePort.supported || remotePortReading || remotePortBusy} onClick={requestOpenSerialDiscovery}>智能识别串口</button>
+          <button type="button" className="ghost" disabled={!remotePort.supported || !remotePort.controlsReady || remotePortReading || remotePortBusy} onClick={() => void remoteDebugStore.selectPort("remote")}>高级手动</button>
           {remotePortReading
             ? <button type="button" className="danger subtle" disabled={!remotePort.controlsReady} onClick={() => void remoteDebugStore.closePort("remote")}>断开</button>
             : <button type="button" disabled={!remotePort.supported || !remotePort.controlsReady || !remoteSnapshot?.selected || remotePortBusy} onClick={() => void remoteDebugStore.connectPort("remote")}>连接</button>}

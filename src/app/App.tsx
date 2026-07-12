@@ -1,11 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { contextForSide, type LocatorCoordinateContext } from "../core/locator";
 import { CommunicationWorkspace } from "../features/communication/CommunicationWorkspace";
 import { LocatorWorkspace } from "../features/locator/LocatorWorkspace";
+import { RecordingDownloadProgress } from "../features/recording/RecordingDownloadProgress";
+import { useRecorder } from "../features/recording/useRecorder";
 import { RemoteControlWorkspace } from "../features/remoteControl/RemoteControlWorkspace";
 import { AutoSerialDiscovery } from "../features/serial/AutoSerialDiscovery";
+import { SerialConnectionCenter } from "../features/serial/SerialConnectionCenter";
+import { serialSessionRegistry } from "../features/serial/serialSessionRegistry";
 import { WaveformWorkspace } from "../features/waveform/WaveformWorkspace";
 import { BUILD_INFO } from "../shared/buildInfo";
 import { LinkIcon, MapIcon, ShieldIcon, WaveIcon } from "../shared/components/Icons";
+import type { SourceRole } from "../core/types";
 
 type Workspace = "communication" | "remote-control" | "locator" | "waveform";
 
@@ -19,6 +25,15 @@ const WORKSPACES = [
 export function App() {
   const [active, setActive] = useState<Workspace>("communication");
   const [updateAvailable, setUpdateAvailable] = useState(false);
+  const recorder = useRecorder("global");
+  const [locatorCoordinates, setLocatorCoordinates] = useState<LocatorCoordinateContext>(() => contextForSide("red", "official"));
+
+  const focusRole = useCallback((role: SourceRole, mode: "single" | "batch" = "single") => {
+    if (mode === "batch") return;
+    if (role === "remote") setActive("remote-control");
+    else if (role === "locator") setActive("locator");
+    else setActive("communication");
+  }, []);
 
   useEffect(() => {
     const check = async () => {
@@ -32,6 +47,10 @@ export function App() {
     const timer = window.setInterval(() => void check(), 10 * 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => serialSessionRegistry.subscribe((event) => {
+    if (event.type === "migrated") focusRole(event.role, "single");
+  }), [focusRole]);
 
   return <div className="app-shell">
     <aside className="sidebar">
@@ -49,7 +68,8 @@ export function App() {
         </button>)}
       </nav>
 
-      <AutoSerialDiscovery />
+      <SerialConnectionCenter recorder={recorder} locatorCoordinates={locatorCoordinates} />
+      <AutoSerialDiscovery showLaunch={false} onRoleBound={focusRole} onBatchComplete={(roles) => { if (roles.length > 1) setActive("communication"); }} />
 
       <div className="sidebar-spacer" />
       <section className="trust-card">
@@ -65,9 +85,10 @@ export function App() {
 
     <div className="content">
       {updateAvailable && <div className="update-banner"><strong>检测到新版本</strong><span>请停止录制后刷新页面，串口不会被网站自动重连。</span></div>}
-      <div className={active === "communication" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "communication"}><CommunicationWorkspace active={active === "communication" || active === "remote-control"} /></div>
+      <div className="global-progress-host"><RecordingDownloadProgress progress={recorder.downloadProgress} /></div>
+      <div className={active === "communication" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "communication"}><CommunicationWorkspace active={active === "communication" || active === "remote-control"} recorder={recorder} /></div>
       <div className={active === "remote-control" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "remote-control"}><RemoteControlWorkspace active={active === "remote-control"} onOpenCommunication={() => setActive("communication")} /></div>
-      <div className={active === "locator" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "locator"}><LocatorWorkspace active={active === "locator"} /></div>
+      <div className={active === "locator" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "locator"}><LocatorWorkspace active={active === "locator"} recorder={recorder} onCoordinateContextChange={setLocatorCoordinates} /></div>
       <div className={active === "waveform" ? "workspace-host active" : "workspace-host"} aria-hidden={active !== "waveform"}><WaveformWorkspace active={active === "waveform"} /></div>
     </div>
   </div>;

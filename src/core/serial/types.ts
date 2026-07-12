@@ -68,4 +68,10 @@ export interface PortSessionOptions<T> {
   now?: () => number;
   onLine?: (received: ReceivedLine<T>) => void;
   onChange?: (snapshot: PortSnapshot) => void;
+  onWrongRole?: (event: {
+    fromRole: SourceRole;
+    detectedRole: SourceRole;
+    port: ReadOnlySerialPort;
+    snapshot: PortSnapshot;
+  }) => void;
 }

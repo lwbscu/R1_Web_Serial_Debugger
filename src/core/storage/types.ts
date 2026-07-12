@@ -1,6 +1,6 @@
 import type { LocatorCoordinateContext } from "../locator";
 
-export type RecordingKind = "communication" | "locator";
+export type RecordingKind = "communication" | "locator" | "global";
 
 export type CommunicationArtifact =
   | "remote_raw.log"
@@ -18,7 +18,20 @@ export type LocatorArtifact =
   | "events.log"
   | "metadata.json";
 
-export type RecordingArtifact = CommunicationArtifact | LocatorArtifact;
+export type GlobalArtifact =
+  | "remote_raw.log"
+  | "chassis_raw.log"
+  | "remote_rdbg.csv"
+  | "remote_rdbg_tx.csv"
+  | "chassis_cdbg.csv"
+  | "locator_raw.log"
+  | "locator_frames.csv"
+  | "locator_display_frames.csv"
+  | "events.csv"
+  | "connection_status.csv"
+  | "session.json";
+
+export type RecordingArtifact = CommunicationArtifact | LocatorArtifact | GlobalArtifact;
 
 export interface SessionManifest {
   schemaVersion: 1;
@@ -98,8 +111,24 @@ const LOCATOR_ARTIFACTS: readonly LocatorArtifact[] = [
   "metadata.json",
 ];
 
+const GLOBAL_ARTIFACTS: readonly GlobalArtifact[] = [
+  "remote_raw.log",
+  "chassis_raw.log",
+  "remote_rdbg.csv",
+  "remote_rdbg_tx.csv",
+  "chassis_cdbg.csv",
+  "locator_raw.log",
+  "locator_frames.csv",
+  "locator_display_frames.csv",
+  "events.csv",
+  "connection_status.csv",
+  "session.json",
+];
+
 export function expectedArtifacts(kind: RecordingKind): readonly RecordingArtifact[] {
-  return kind === "communication" ? COMMUNICATION_ARTIFACTS : LOCATOR_ARTIFACTS;
+  if (kind === "communication") return COMMUNICATION_ARTIFACTS;
+  if (kind === "locator") return LOCATOR_ARTIFACTS;
+  return GLOBAL_ARTIFACTS;
 }
 
 export function isArtifactForKind(

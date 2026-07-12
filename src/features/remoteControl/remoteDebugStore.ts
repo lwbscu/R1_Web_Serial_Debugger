@@ -6,7 +6,7 @@ import type { DiagnosticEvent } from "../communication/eventDetector";
 
 export interface RemoteDebugLogEntry {
   at: number;
-  role: "remote" | "chassis";
+  role: SourceRole;
   line: string;
   result: string;
 }
@@ -21,7 +21,7 @@ export interface RemoteDebugState {
   latestRemote: RemoteFrame | null;
   latestChassis: ChassisFrame | null;
   latestTx: RemoteTxEvent | null;
-  ports: Record<"remote" | "chassis", RemoteDebugPortState>;
+  ports: Record<SourceRole, RemoteDebugPortState>;
   txEvents: RemoteTxEvent[];
   firmwareEvents: DiagnosticEvent[];
   parseErrors: DiagnosticEvent[];
@@ -48,6 +48,7 @@ const INITIAL_STATE: RemoteDebugState = {
   ports: {
     remote: EMPTY_PORT_STATE,
     chassis: EMPTY_PORT_STATE,
+    locator: EMPTY_PORT_STATE,
   },
   txEvents: [],
   firmwareEvents: [],
@@ -58,7 +59,7 @@ const INITIAL_STATE: RemoteDebugState = {
 
 class RemoteDebugStore {
   private state = INITIAL_STATE;
-  private readonly portActions: Partial<Record<"remote" | "chassis", RemoteDebugPortActions>> = {};
+  private readonly portActions: Partial<Record<SourceRole, RemoteDebugPortActions>> = {};
   private readonly listeners = new Set<() => void>();
 
   subscribe = (listener: () => void): (() => void) => {
@@ -83,7 +84,7 @@ class RemoteDebugStore {
     });
   }
 
-  publishPort(role: Extract<SourceRole, "remote" | "chassis">, supported: boolean, snapshot: PortSnapshot): void {
+  publishPort(role: SourceRole, supported: boolean, snapshot: PortSnapshot): void {
     const previous = this.state.ports[role];
     this.patch({
       ports: {
@@ -93,7 +94,7 @@ class RemoteDebugStore {
     });
   }
 
-  registerPortActions(role: Extract<SourceRole, "remote" | "chassis">, actions: RemoteDebugPortActions): () => void {
+  registerPortActions(role: SourceRole, actions: RemoteDebugPortActions): () => void {
     this.portActions[role] = actions;
     this.patch({
       ports: {
@@ -113,15 +114,15 @@ class RemoteDebugStore {
     };
   }
 
-  async selectPort(role: Extract<SourceRole, "remote" | "chassis">): Promise<void> {
+  async selectPort(role: SourceRole): Promise<void> {
     await this.portActions[role]?.select();
   }
 
-  async connectPort(role: Extract<SourceRole, "remote" | "chassis">): Promise<void> {
+  async connectPort(role: SourceRole): Promise<void> {
     await this.portActions[role]?.connect();
   }
 
-  async closePort(role: Extract<SourceRole, "remote" | "chassis">): Promise<void> {
+  async closePort(role: SourceRole): Promise<void> {
     await this.portActions[role]?.close();
   }
 

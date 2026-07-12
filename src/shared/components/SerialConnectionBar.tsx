@@ -30,9 +30,11 @@ export interface SerialConnectionBarProps {
   onSelect(): void;
   onConnect(): void;
   onClose(): void;
+  selectLabel?: string;
+  onAdvancedSelect?: () => void;
 }
 
-export function SerialConnectionBar({ title, subtitle, supported, snapshot, onSelect, onConnect, onClose }: SerialConnectionBarProps) {
+export function SerialConnectionBar({ title, subtitle, supported, snapshot, onSelect, onConnect, onClose, selectLabel = "智能识别串口", onAdvancedSelect }: SerialConnectionBarProps) {
   const busy = snapshot.lifecycle === "requesting" || snapshot.lifecycle === "opening" || snapshot.lifecycle === "closing";
   const device = snapshot.portInfo
     ? `USB VID ${hex(snapshot.portInfo.usbVendorId)} · PID ${hex(snapshot.portInfo.usbProductId)}`
@@ -52,7 +54,8 @@ export function SerialConnectionBar({ title, subtitle, supported, snapshot, onSe
       <span>{LIFECYCLE_TEXT[snapshot.lifecycle]}</span>
     </div>
     <div className="serial-actions">
-      <button type="button" className="secondary" onClick={onSelect} disabled={!supported || snapshot.lifecycle === "reading" || busy}>选择串口</button>
+      <button type="button" className="secondary" onClick={onSelect} disabled={!supported || snapshot.lifecycle === "reading" || busy}>{selectLabel}</button>
+      {onAdvancedSelect && <button type="button" className="ghost serial-advanced-select" onClick={onAdvancedSelect} disabled={!supported || snapshot.lifecycle === "reading" || busy}>高级手动</button>}
       {snapshot.lifecycle === "reading"
         ? <button type="button" className="danger subtle" onClick={onClose}>断开</button>
         : <button type="button" onClick={onConnect} disabled={!snapshot.selected || busy}>连接</button>}
@@ -62,7 +65,7 @@ export function SerialConnectionBar({ title, subtitle, supported, snapshot, onSe
       <div><dt>帧</dt><dd>{snapshot.stats.validFrames.toLocaleString()}</dd></div>
       <div><dt>错误</dt><dd>{snapshot.stats.parseErrors.toLocaleString()}</dd></div>
     </dl>
-    {snapshot.health === "wrong-role" && <p className="inline-alert warning">持续检测到 {snapshot.detectedRole ?? "其他"} 协议。请重新选择正确设备，网页不会自动交换端口。</p>}
+    {snapshot.health === "wrong-role" && <p className="inline-alert warning">持续检测到 {snapshot.detectedRole ?? "其他"} 协议。若目标角色空闲，网页会自动迁移到对应连接；若目标已连接，请先断开冲突端口。</p>}
     {snapshot.error && <p className="inline-alert error">{snapshot.error}</p>}
   </section>;
 }

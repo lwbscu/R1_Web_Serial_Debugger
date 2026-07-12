@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { browserSerialApi, probePorts, type PortProbeResult, type ProbeCandidate, type ReadOnlySerialPort } from "../../core/serial";
 import type { SourceRole } from "../../core/types";
+import { discoveryDialogStore } from "./discoveryDialogStore";
 import { serialSessionRegistry, type RegistryBindResult } from "./serialSessionRegistry";
 import "./AutoSerialDiscovery.css";
 
@@ -22,6 +23,12 @@ interface DiscoveryRow {
   binding: RegistryBindResult | null;
 }
 
+export interface AutoSerialDiscoveryProps {
+  onRoleBound?: (role: SourceRole, mode: "single" | "batch") => void;
+  onBatchComplete?: (roles: SourceRole[]) => void;
+  showLaunch?: boolean;
+}
+
 function validFrameTotal(result: PortProbeResult): number {
   return Object.values(result.validFrameCounts).reduce((sum, value) => sum + value, 0);
 }
@@ -31,8 +38,9 @@ function roleText(result: PortProbeResult): string {
   return ROLE_LABELS[result.role];
 }
 
-export function AutoSerialDiscovery() {
+export function AutoSerialDiscovery({ onRoleBound, onBatchComplete, showLaunch = true }: AutoSerialDiscoveryProps = {}) {
   const api = useMemo(() => typeof navigator === "undefined" || typeof window === "undefined" || !window.isSecureContext ? null : browserSerialApi(), []);
+  const openRequestId = useSyncExternalStore(discoveryDialogStore.subscribe, discoveryDialogStore.snapshot, discoveryDialogStore.snapshot);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<"authorize" | "probe" | null>(null);
   const [status, setStatus] = useState("等待授权或探测。网页不会向设备发送任何字节。 ");
@@ -75,6 +83,10 @@ export function AutoSerialDiscovery() {
   };
 
   useEffect(() => () => aborter.current?.abort(), []);
+
+  useEffect(() => {
+    if (openRequestId > 0) setOpen(true);
+  }, [openRequestId]);
 
   useEffect(() => {
     if (!open) return;
@@ -128,7 +140,10 @@ export function AutoSerialDiscovery() {
       const row = discovered[0];
       if (controller.signal.aborted || row?.result.reason === "cancelled") setStatus("已停止本次只读探测，未绑定晚到结果。");
       else if (!row) setStatus(`${candidate.label} 未返回探测结果。`);
-      else if (row.binding?.ok) setStatus(`${candidate.label} 已识别为${roleText(row.result)}，并自动绑定连接。若还有新设备，可继续添加。`);
+      else if (row.binding?.ok && row.result.role) {
+        onRoleBound?.(row.result.role, "single");
+        setStatus(`${candidate.label} 已识别为${roleText(row.result)}，并自动绑定连接。若还有新设备，可继续添加。`);
+      }
       else if (row.result.confidence !== "confident") setStatus(`${candidate.label} 的协议证据不足或冲突，已保留结果但没有绑定。`);
       else setStatus(`${candidate.label} 已识别为${roleText(row.result)}，但未绑定：${row.binding?.message ?? "对应会话不可用"}`);
     } catch (error) {
@@ -160,6 +175,9 @@ export function AutoSerialDiscovery() {
         return;
       }
       const connected = discovered.filter((item) => item.binding?.ok).length;
+      const roles = discovered.flatMap((item) => item.binding?.ok && item.result.role ? [item.result.role] : []);
+      roles.forEach((role) => onRoleBound?.(role, "batch"));
+      onBatchComplete?.(roles);
       const unbound = discovered.length - connected;
       setStatus(`探测完成：${connected} 个已自动绑定并连接，${unbound} 个因证据不足、冲突或会话占用而未绑定。`);
     } catch (error) {
@@ -177,10 +195,10 @@ export function AutoSerialDiscovery() {
   };
 
   return <>
-    <button ref={launchRef} type="button" className="asd-launch" aria-label="自动识别串口" onClick={() => setOpen(true)} title="对已授权串口只读采样，自动识别并绑定遥控器、底盘和定位/码盘板">
+    {showLaunch && <button ref={launchRef} type="button" className="asd-launch" aria-label="自动识别串口" onClick={() => setOpen(true)} title="对已授权串口只读采样，自动识别并绑定遥控器、底盘和定位/码盘板">
       <span className="asd-launch-icon">A</span>
-      <span><strong>自动识别串口</strong><small>READ-ONLY DISCOVERY</small></span>
-    </button>
+      <span><strong>智能连接串口</strong><small>READ-ONLY DISCOVERY</small></span>
+    </button>}
 
     {open && <div className="asd-backdrop" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) closeDialog(); }}>
       <section ref={dialogRef} className="asd-dialog" role="dialog" aria-modal="true" aria-labelledby="asd-title" onKeyDown={handleDialogKeyDown}>

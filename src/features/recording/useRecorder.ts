@@ -23,6 +23,19 @@ export interface RecordingDownloadProgress {
 
 export type RecorderManifestExtras = Pick<SessionManifest, "locatorCoordinates" | "notes">;
 
+export interface RecorderController {
+  kind: RecordingKind;
+  active: boolean;
+  exporting: boolean;
+  downloadProgress: RecordingDownloadProgress | null;
+  recoverable: RecoverableSession[];
+  error: string | null;
+  start(extras?: RecorderManifestExtras): Promise<void>;
+  append(artifact: RecordingArtifact, text: string, at?: number): Promise<void> | undefined;
+  stopAndDownload(): Promise<void>;
+  downloadRecovered(id: string): Promise<void>;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
@@ -69,7 +82,7 @@ async function updateExportProgress(
   if (progress.phase !== "reading") await waitForPaint();
 }
 
-export function useRecorder(kind: RecordingKind) {
+export function useRecorder(kind: RecordingKind): RecorderController {
   const storeRef = useRef<OpfsFileStore | null>(null);
   const recorderRef = useRef<SessionRecorder | null>(null);
   const exportingRef = useRef(false);
@@ -81,15 +94,16 @@ export function useRecorder(kind: RecordingKind) {
   const refresh = useCallback(async () => {
     try {
       const store = storeRef.current ??= new OpfsFileStore();
-      setRecoverable((await listRecoverableSessions(store)).filter((item) => item.manifest.kind === kind));
+      const sessions = await listRecoverableSessions(store);
+      setRecoverable(kind === "global" ? sessions : sessions.filter((item) => item.manifest.kind === kind));
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }, [kind]);
   useEffect(() => { void refresh(); }, [refresh]);
   const start = useCallback(async (extras: RecorderManifestExtras = {}) => {
     if (exportingRef.current) return;
     try {
-      if (kind !== "locator" && extras.locatorCoordinates !== undefined) {
-        throw new Error("locatorCoordinates may only be recorded in a locator session");
+      if (kind === "communication" && extras.locatorCoordinates !== undefined) {
+        throw new Error("locatorCoordinates may only be recorded in a locator/global session");
       }
       const store = storeRef.current ??= new OpfsFileStore();
       recorderRef.current = await SessionRecorder.create(store, {
@@ -227,7 +241,7 @@ export function useRecorder(kind: RecordingKind) {
       setExporting(false);
     }
   }, [refresh]);
-  return useMemo(() => ({ active, exporting, downloadProgress, recoverable, error, start, append, stopAndDownload, downloadRecovered }), [
-    active, exporting, downloadProgress, recoverable, error, start, append, stopAndDownload, downloadRecovered,
+  return useMemo(() => ({ kind, active, exporting, downloadProgress, recoverable, error, start, append, stopAndDownload, downloadRecovered }), [
+    kind, active, exporting, downloadProgress, recoverable, error, start, append, stopAndDownload, downloadRecovered,
   ]);
 }

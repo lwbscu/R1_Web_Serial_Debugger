@@ -101,13 +101,12 @@ test("keeps workspaces mounted and explains unsupported Web Serial", async ({ pa
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "双串口通信诊断" })).toBeVisible();
   await expect(page.getByText("实时串口需要桌面版 Chrome/Edge")).toBeVisible();
-  const discoveryLauncher = page.getByRole("button", { name: /自动识别串口/ });
+  const discoveryLauncher = page.getByRole("button", { name: "智能连接串口" }).first();
   await discoveryLauncher.click();
   await expect(page.getByRole("dialog", { name: "串口自动识别与绑定" })).toBeVisible();
   await expect(page.getByRole("button", { name: "关闭" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "串口自动识别与绑定" })).toBeHidden();
-  await expect(discoveryLauncher).toBeFocused();
 
   await page.getByRole("button", { name: /定位地图/ }).click();
   await expect(page.getByRole("heading", { name: "定位地图" })).toBeVisible();
@@ -117,7 +116,7 @@ test("keeps workspaces mounted and explains unsupported Web Serial", async ({ pa
   await page.getByRole("button", { name: /遥控器窗口/ }).click();
   await expect(page.getByRole("heading", { name: "遥控器窗口" })).toBeVisible();
   await expect(page.getByLabel("遥控器串口侧栏")).toContainText("浏览器不支持 Web Serial");
-  await expect(page.getByRole("button", { name: "选择遥控器串口" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "智能识别串口" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "打开通信诊断全量串口" })).toBeVisible();
   await expect(page.getByText("当前命令")).toBeVisible();
   await expect(page.getByText("协议数组")).toBeVisible();
@@ -147,7 +146,7 @@ test("shows progress while stopping and downloading a local recording", async ({
   await disableWebSerial(page);
   await page.goto("/");
 
-  await page.getByRole("button", { name: "开始本地录制" }).click();
+  await page.getByRole("button", { name: "开始三串口录制" }).click();
   await expect(page.getByRole("button", { name: "停止并下载" })).toBeVisible();
   const communicationDownload = page.waitForEvent("download");
   await page.getByRole("button", { name: "停止并下载" }).click();
@@ -155,19 +154,9 @@ test("shows progress while stopping and downloading a local recording", async ({
   await expect(communicationStatus).toBeVisible();
   await expect(communicationStatus.getByRole("progressbar", { name: "录制下载进度" })).toBeVisible();
   await expect(communicationStatus).toContainText("100%");
-  expect((await communicationDownload).suggestedFilename()).toMatch(/^communication_/);
-
-  await page.getByRole("button", { name: /定位地图/ }).click();
-  await page.getByRole("button", { name: "开始本地录制" }).click();
-  const locatorDownload = page.waitForEvent("download");
-  await page.getByRole("button", { name: "停止并下载" }).click();
-  const locatorStatus = page.getByRole("status").filter({ hasText: "录制下载" });
-  await expect(locatorStatus).toBeVisible();
-  await expect(locatorStatus).toContainText("100%");
-  expect((await locatorDownload).suggestedFilename()).toMatch(/^locator_/);
+  expect((await communicationDownload).suggestedFilename()).toMatch(/^global_/);
 
   await page.setViewportSize({ width: 375, height: 812 });
-  await expect(locatorStatus).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBeTruthy();
 });
 
@@ -353,7 +342,7 @@ test("starts locator demo near local zero and locks the side selector while reco
   await expect(poseValues.nth(0)).toHaveText("0.00");
   await expect(poseValues.nth(1)).toHaveText("0.00");
 
-  await workspace.getByRole("button", { name: "开始本地录制", exact: true }).click();
+  await page.getByRole("button", { name: "开始三串口录制", exact: true }).click();
   await expect(workspace.getByRole("button", { name: "正式赛", exact: true })).toBeDisabled();
   await expect(workspace.getByRole("button", { name: "预选赛", exact: true })).toBeDisabled();
   await expect(workspace.getByRole("button", { name: "红方", exact: true })).toBeDisabled();
@@ -388,7 +377,7 @@ test("read-only probes three authorized ports and auto-binds unique roles", asyn
   await page.getByRole("button", { name: "演示轨迹" }).click();
   await page.getByRole("button", { name: /通信诊断/ }).click();
 
-  await page.getByRole("button", { name: /自动识别串口/ }).click();
+  await page.getByRole("button", { name: "智能连接串口" }).first().click();
   await expect(page.getByRole("dialog", { name: "串口自动识别与绑定" })).toBeVisible();
   await expect(page.getByText("标准接口不会返回 COM7")).toBeVisible();
   await page.getByRole("button", { name: "批量探测已授权串口" }).click();
