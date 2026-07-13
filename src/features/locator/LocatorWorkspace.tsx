@@ -109,9 +109,10 @@ export function LocatorWorkspace({
     if (clockRef.current) setReplay(clockRef.current.snapshot);
     telemetryHub.releaseSource("locator", "replay");
   }, []);
+  const appendRecording = recorder.append;
   const recordRaw = useCallback((received: { line: string }) => {
-    void recorder.append("locator_raw.log", `${Date.now()},${received.line}\n`);
-  }, [recorder]);
+    void appendRecording("locator_raw.log", `${Date.now()},${received.line}\n`);
+  }, [appendRecording]);
 
   const port = usePortSession<LocatorFrame>("locator", adapter, onSerial, () => {
     stopDemo();

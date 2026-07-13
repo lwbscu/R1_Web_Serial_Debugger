@@ -166,12 +166,13 @@ export function CommunicationWorkspace({ active = true, recorder }: { active?: b
     telemetryHub.releaseSource("chassis", "serial");
   }, []);
 
+  const appendRecording = recorder.append;
   const recordRemoteRaw = useCallback((received: { line: string }) => {
-    void recorder.append("remote_raw.log", `${Date.now()},${received.line}\n`);
-  }, [recorder]);
+    void appendRecording("remote_raw.log", `${Date.now()},${received.line}\n`);
+  }, [appendRecording]);
   const recordChassisRaw = useCallback((received: { line: string }) => {
-    void recorder.append("chassis_raw.log", `${Date.now()},${received.line}\n`);
-  }, [recorder]);
+    void appendRecording("chassis_raw.log", `${Date.now()},${received.line}\n`);
+  }, [appendRecording]);
 
   const remotePort = usePortSession<RemoteFrame>("remote", remoteAdapter, handle("remote"), () => {
     stopDemo();

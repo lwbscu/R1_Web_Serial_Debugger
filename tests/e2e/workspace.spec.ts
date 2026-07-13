@@ -13,6 +13,8 @@ async function disableWebSerial(page: Page) {
 
 async function installMockSerial(page: Page) {
   await page.addInitScript(() => {
+    const audit = { closeCount: 0 };
+    Object.defineProperty(window, "__r1MockSerialAudit", { configurable: true, value: audit });
     class MockSerialPort {
       readable: ReadableStream<Uint8Array> | null = null;
       private stop: (() => void) | null = null;
@@ -44,6 +46,7 @@ async function installMockSerial(page: Page) {
       }
 
       async close() {
+        audit.closeCount += 1;
         this.stop?.();
         this.stop = null;
         this.readable = null;
@@ -256,6 +259,46 @@ test("records and exports all three raw streams when every protocol layout is in
   expect(new TextDecoder().decode(entries["locator_raw.log"]!)).toContain("$R1M,99,future-layout");
   expect(new TextDecoder().decode(entries["raw_serial.log"]!)).toContain("future-layout");
   expect(new TextDecoder().decode(entries["connection_status.csv"]!)).toContain("mismatch");
+});
+
+test("starting and stopping a recording keeps three existing serial sessions alive", async ({ page }) => {
+  test.setTimeout(120_000);
+  await installMockSerial(page);
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "智能连接串口" }).first().click();
+  await page.getByRole("button", { name: "批量探测已授权串口" }).click();
+  await expect(page.getByRole("status")).toContainText("3 个已自动绑定并连接", { timeout: 10_000 });
+  await page.getByRole("button", { name: "关闭" }).click();
+
+  const roleCards = page.getByLabel("三串口连接中心").locator(".serial-role-card");
+  await expect(roleCards).toHaveCount(3);
+  for (const card of await roleCards.all()) await expect(card).toContainText("正在接收");
+  const closeCountBeforeRecording = await page.evaluate(() =>
+    (window as unknown as { __r1MockSerialAudit: { closeCount: number } }).__r1MockSerialAudit.closeCount);
+
+  await page.getByRole("button", { name: "开始三串口录制", exact: true }).click();
+  await expect(page.getByRole("button", { name: "停止并后台下载", exact: true })).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(500);
+  for (const card of await roleCards.all()) await expect(card).toContainText("正在接收");
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __r1MockSerialAudit: { closeCount: number } }).__r1MockSerialAudit.closeCount))
+    .toBe(closeCountBeforeRecording);
+
+  const download = page.waitForEvent("download", { timeout: 120_000 });
+  await page.getByRole("button", { name: "停止并后台下载", exact: true }).click();
+  const downloadPath = await (await download).path();
+  expect(downloadPath).toBeTruthy();
+  for (const card of await roleCards.all()) await expect(card).toContainText("正在接收");
+  expect(await page.evaluate(() =>
+    (window as unknown as { __r1MockSerialAudit: { closeCount: number } }).__r1MockSerialAudit.closeCount))
+    .toBe(closeCountBeforeRecording);
+
+  const entries = unzipSync(readFileSync(downloadPath!));
+  expect(new TextDecoder().decode(entries["remote_raw.log"]!)).toContain("RDBG");
+  expect(new TextDecoder().decode(entries["chassis_raw.log"]!)).toContain("CDBG");
+  expect(new TextDecoder().decode(entries["locator_raw.log"]!)).toContain("1,2,3,4,5,6,7,8,9");
+  expect(entries["raw_serial.log"]).toBeDefined();
 });
 
 test("stops and downloads a 31 second mock serial recording without blocking the next one", async ({ page }) => {

@@ -23,6 +23,8 @@ export function usePortSession<T>(
 ) {
   const callback = useRef(onLine);
   callback.current = onLine;
+  const rawCallback = useRef(onRawLine);
+  rawCallback.current = onRawLine;
   const beforeExternalBindRef = useRef(beforeExternalBind);
   beforeExternalBindRef.current = beforeExternalBind;
   const [snapshot, setSnapshot] = useState(() => emptySnapshot(role));
@@ -69,7 +71,7 @@ export function usePortSession<T>(
         timeoutMs: 2200,
         maxLines: 30,
         minValidFrames: 3,
-        onRawLine: (_candidate, line, observedAtMs) => onRawLine?.({ line, observedAtMs, framingWarnings: [] }),
+        onRawLine: (_candidate, line, observedAtMs) => rawCallback.current?.({ line, observedAtMs, framingWarnings: [] }),
       });
       if (result.confidence === "confident" && result.role && result.role !== role) {
         const binding = await serialSessionRegistry.bindAndConnect(result.role, port);
@@ -82,19 +84,19 @@ export function usePortSession<T>(
       if (!claim.ok) throw new Error(claim.message);
       return port;
     },
-  } : null, [baseProvider, onRawLine, role]);
+  } : null, [baseProvider, role]);
   const session = useMemo(() => provider ? new PortSession<T>({
     role,
     provider,
     adapter,
-    onRawLine,
+    onRawLine: (line) => rawCallback.current?.(line),
     onLine: (line) => callback.current(line),
     onChange: publishSnapshot,
     onWrongRole: (event) => {
       void serialSessionRegistry.migrateWrongRole(event.fromRole, event.detectedRole, event.port)
         .then((result) => serialHubStore.publishAutoMessage(result.role, result.message));
     },
-  }) : null, [role, provider, adapter, onRawLine, publishSnapshot]);
+  }) : null, [role, provider, adapter, publishSnapshot]);
   useEffect(() => () => {
     if (snapshotTimerRef.current !== null) window.clearTimeout(snapshotTimerRef.current);
   }, []);
